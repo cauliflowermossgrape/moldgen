@@ -125,6 +125,10 @@ body {
   display: none;
 }
 
+.file-drop .muted {
+  color: #5a626d;
+}
+
 /* --- info rows ------------------------------------------------------------ */
 
 #part-info {

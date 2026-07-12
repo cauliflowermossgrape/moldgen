@@ -57,7 +57,12 @@ used for vacuum bagging tape (sealant tape sticks to the flat flange).
   - `validate.py` — watertightness checks + best-effort trimesh repair.
   - `offset.py` — vertex-normal cavity offset (approximate; see docstring
     for self-intersection caveats).
-  - `io.py` — `load_part` (STL/3MF/OBJ) and `export_stl` (binary).
+  - `io.py` — `load_part` (STL/3MF/OBJ, plus STEP/IGES when the "step"
+    extra is installed) and `export_stl` (binary).
+  - `step_io.py` — optional STEP/IGES tessellation via cadquery/OCP behind
+    the `step` pyproject extra (OCP wheels are heavy). `HAS_STEP` is the
+    runtime capability flag; `/api/health` reports it and the UI greys the
+    formats out when missing. Never import cadquery outside this module.
   - `undercuts.py` — `analyze_undercuts` (first-order per-face normal check
     against the ±Z pull directions; does NOT catch silhouette-occluded
     undercuts — that needs visibility testing) and `suggest_parting_plane`

@@ -43,3 +43,9 @@ paste a screenshot. three.js loads from jsdelivr CDN (needs internet).
 - `pkill -f uvicorn` can kill your own shell's process group (exit 144) —
   start the server with `run_in_background` instead and let it die with the
   session, or target the PID.
+- STEP/IGES support (`pip install cadquery` in the venv) needs system libGL,
+  which isn't apt-installed here and sudo needs a password. Workaround that
+  works: `apt-get download libgl1 libglvnd0 libglx0` (no sudo needed),
+  `dpkg-deb -x` them into `~/.local/opt/gl`, then run server/tests with
+  `LD_LIBRARY_PATH=$HOME/.local/opt/gl/usr/lib/x86_64-linux-gnu`. Without it
+  cadquery import fails and moldgen correctly degrades to mesh-only.
