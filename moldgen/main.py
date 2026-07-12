@@ -38,7 +38,7 @@ FRONTEND_DIR = ROOT / "frontend"
 WORKDIR = ROOT / "workdir"
 
 MESH_ID_RE = re.compile(r"^[0-9a-f]{12}$")
-DOWNLOADABLE = {"part", "top", "bottom", "tool"}
+DOWNLOADABLE = {"part", "female", "male", "tool"}
 
 app = FastAPI(title="moldgen", version=__version__)
 
@@ -52,9 +52,21 @@ class GenerateRequest(BaseModel):
     mesh_id: str
     parting_z_mm: float
     mode: str = "compression"
-    wall_margin_mm: float = 15.0
+    wall_margin_mm: float = 22.0
     cavity_offset_mm: float = 0.0
     keep_side: str = "below"
+    plunge_mm: float = 10.0
+    plug_border_mm: float = 8.0
+    plug_clearance_mm: float = 0.15
+    plug_draft_deg: float = 1.0
+    lead_in_mm: float = 1.0
+    pry_slots: bool = True
+    pry_slot_width_mm: float = 20.0
+    pry_slot_depth_mm: float = 3.0
+    overflow_channels: bool = True
+    overflow_per_edge: int = 2
+    overflow_width_mm: float = 2.0
+    overflow_depth_mm: float = 0.5
     pins: bool = True
     pin_clearance_mm: float = 0.15
     bolts: bool = False

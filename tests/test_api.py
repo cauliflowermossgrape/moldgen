@@ -67,9 +67,12 @@ def test_full_flow(client):
         },
     ).json()
     assert gen["ok"] is True, gen.get("errors")
-    assert set(gen["halves"]) == {"top", "bottom"}
+    assert set(gen["halves"]) == {"female", "male"}
     assert "pins" in gen["metadata"]["hardware"]
     assert "bolts" in gen["metadata"]["hardware"]
+    assert "pry_slots" in gen["metadata"]["hardware"]
+    assert "overflow" in gen["metadata"]["hardware"]
+    assert gen["metadata"]["forged"]["plunge_mm"] == 10.0
     for name, info in gen["halves"].items():
         assert info["watertight"] is True
         dl = client.get(info["url"])
@@ -121,5 +124,5 @@ def test_bad_requests(client):
     resp = client.get(f"/api/download/{up['mesh_id']}/evil.stl")
     assert resp.status_code == 404
 
-    resp = client.get(f"/api/download/{up['mesh_id']}/top.stl")
+    resp = client.get(f"/api/download/{up['mesh_id']}/female.stl")
     assert resp.status_code == 404  # not generated yet

@@ -83,9 +83,17 @@ const ghostMaterial = new THREE.MeshBasicMaterial({
   color: 0xd8dce2, transparent: true, opacity: 0.22, depthWrite: false,
 });
 const halfMaterials = {
-  top: new THREE.MeshMatcapMaterial({ matcap, color: 0xe8955a }),
-  bottom: new THREE.MeshMatcapMaterial({ matcap, color: 0x6fa8e8 }),
+  male: new THREE.MeshMatcapMaterial({ matcap, color: 0xe8955a }),
+  female: new THREE.MeshMatcapMaterial({ matcap, color: 0x6fa8e8 }),
   tool: new THREE.MeshMatcapMaterial({ matcap, color: 0x5fc9a8 }),
+};
+
+// per-process fit clearances: resin/SLA is dimensionally tight, FDM needs
+// play, machined tools can run 0.1 mm (Easy Composites' forged guidance)
+const PRINTER_PRESETS = {
+  resin: { pin: 0.15, plug: 0.15 },
+  fdm: { pin: 0.25, plug: 0.3 },
+  cnc: { pin: 0.1, plug: 0.1 },
 };
 const planeMaterial = new THREE.MeshBasicMaterial({
   color: 0x4fa3ff, transparent: true, opacity: 0.16,
@@ -307,6 +315,13 @@ function currentParams() {
     wall_margin_mm: parseFloat($('wall-margin').value),
     cavity_offset_mm: parseFloat($('cavity-offset').value),
     keep_side: $('keep-side').value,
+    plunge_mm: parseFloat($('plunge').value),
+    plug_border_mm: parseFloat($('plug-border').value),
+    plug_clearance_mm: parseFloat($('plug-clearance').value),
+    plug_draft_deg: parseFloat($('plug-draft').value),
+    lead_in_mm: parseFloat($('lead-in').value),
+    pry_slots: $('pry-slots').checked,
+    overflow_channels: $('overflow').checked,
     pins: $('pins').checked,
     pin_clearance_mm: parseFloat($('pin-clearance').value),
     bolts: $('bolts').checked,
@@ -318,8 +333,8 @@ function currentParams() {
 
 function applyExplode() {
   const d = parseFloat($('explode').value) * state.explodeMax;
-  if (state.halfMeshes.top) state.halfMeshes.top.position.z = d / 2;
-  if (state.halfMeshes.bottom) state.halfMeshes.bottom.position.z = -d / 2;
+  if (state.halfMeshes.male) state.halfMeshes.male.position.z = d / 2;
+  if (state.halfMeshes.female) state.halfMeshes.female.position.z = -d / 2;
 }
 
 async function generate() {
@@ -412,9 +427,17 @@ for (const radio of document.querySelectorAll('input[name="mold-style"]')) {
   radio.addEventListener('change', () => {
     const openLayup = radio.value === 'open_layup' && radio.checked;
     $('open-layup-opts').classList.toggle('hidden', !openLayup);
+    $('forged-panel').classList.toggle('hidden', openLayup);
     $('hardware-panel').classList.toggle('hidden', openLayup);
   });
 }
+
+$('printer').addEventListener('change', () => {
+  const preset = PRINTER_PRESETS[$('printer').value];
+  $('pin-clearance').value = preset.pin;
+  $('plug-clearance').value = preset.plug;
+  setStatus(`clearances set for ${$('printer').selectedOptions[0].textContent}`);
+});
 $('pins').addEventListener('change', () => {
   $('pin-clearance-field').classList.toggle('hidden', !$('pins').checked);
 });

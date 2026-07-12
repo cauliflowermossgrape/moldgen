@@ -1,8 +1,13 @@
-"""Mold-generation pipeline: validate part → block → subtract → split.
+"""Mold-generation pipeline: validate part → build halves → hardware.
 
 All boolean work happens in manifold3d (watertight-guaranteed); trimesh is
 used for analysis, repair and I/O. Units are millimeters. The parting plane
 is horizontal (normal +Z) at z = params.parting_z_mm in the part's own frame.
+
+Compression mode builds a telescoping (plunge) mold via forged.build —
+female pocket + male piston, per Easy Composites' forged carbon guidance.
+Open-layup mode splits a simple block at the parting plane and keeps one
+side as a single-sided tool.
 """
 
 from __future__ import annotations
@@ -10,7 +15,7 @@ from __future__ import annotations
 import numpy as np
 import trimesh
 
-from . import hardware, mfld
+from . import forged, hardware, mfld
 from .offset import offset_mesh
 from .types import MoldParams, MoldResult
 from .validate import validate_and_repair
@@ -47,15 +52,15 @@ def generate_mold(mesh: trimesh.Trimesh, params: MoldParams) -> MoldResult:
             )
 
     bounds = part.bounds
-    block_min = bounds[0] - params.wall_margin_mm
-    block_max = bounds[1] + params.wall_margin_mm
     z = float(params.parting_z_mm)
-    if not (block_min[2] < z < block_max[2]):
+    block_lo = bounds[0][2] - params.wall_margin_mm
+    block_hi = bounds[1][2] + params.wall_margin_mm
+    if not (block_lo < z < block_hi):
         return MoldResult(
             ok=False,
             errors=[
                 f"parting_z_mm={z:g} lies outside the mold block "
-                f"(z from {block_min[2]:g} to {block_max[2]:g})"
+                f"(z from {block_lo:g} to {block_hi:g})"
             ],
             warnings=warnings,
         )
@@ -73,71 +78,68 @@ def generate_mold(mesh: trimesh.Trimesh, params: MoldParams) -> MoldResult:
             warnings=warnings,
         )
 
-    mold = mfld.box(block_min, block_max) - part_man
-
     z_split = _nudged_parting_height(part, z, warnings)
 
     hardware_meta: dict = {}
-    pegs = pin_holes = None
+    extra_meta: dict = {}
     if params.mode == "compression":
         if params.trim_groove:
             warnings.append("trim groove applies only to open-layup tools; ignored")
-        if params.pins:
-            pegs, pin_holes, pin_info = hardware.registration_pins(
-                block_min, block_max, z_split, params, warnings
+        try:
+            female, male, forged_meta, hardware_meta = forged.build(
+                part_man, bounds, z_split, params, warnings
             )
-            if pin_info is not None:
-                hardware_meta["pins"] = pin_info
+        except ValueError as exc:
+            return MoldResult(ok=False, errors=[str(exc)], warnings=warnings)
+        halves = {
+            "female": mfld.to_trimesh(female),
+            "male": mfld.to_trimesh(male),
+        }
+        block_bounds = forged_meta.pop("block_bounds")
+        extra_meta["forged"] = forged_meta
+    else:
         if params.bolts:
-            bolt_cyls, bolt_info = hardware.bolt_holes(
-                block_min, block_max, params, hardware_meta.get("pins"), warnings
+            warnings.append("bolt holes apply only to compression molds; ignored")
+        block_min = bounds[0] - params.wall_margin_mm
+        block_max = bounds[1] + params.wall_margin_mm
+        mold = mfld.box(block_min, block_max) - part_man
+
+        half_a, half_b = mold.split_by_plane((0.0, 0.0, 1.0), z_split)
+        if half_a.is_empty() or half_b.is_empty():
+            return MoldResult(
+                ok=False,
+                errors=["splitting at the parting plane produced an empty half"],
+                warnings=warnings,
             )
-            if bolt_cyls is not None:
-                mold = mold - bolt_cyls
-                hardware_meta["bolts"] = bolt_info
-    elif params.bolts:
-        warnings.append("bolt holes apply only to compression molds; ignored")
+        # Assign above/below by measured position rather than trusting the
+        # split_by_plane ordering convention.
+        z_a = float(np.mean(half_a.to_mesh().vert_properties[:, 2]))
+        z_b = float(np.mean(half_b.to_mesh().vert_properties[:, 2]))
+        above, below = (half_a, half_b) if z_a >= z_b else (half_b, half_a)
 
-    half_a, half_b = mold.split_by_plane((0.0, 0.0, 1.0), z_split)
-    if half_a.is_empty() or half_b.is_empty():
-        return MoldResult(
-            ok=False,
-            errors=["splitting at the parting plane produced an empty half"],
-            warnings=warnings,
-        )
-    # Assign top/bottom by measured position rather than trusting the
-    # split_by_plane ordering convention.
-    z_a = float(np.mean(half_a.to_mesh().vert_properties[:, 2]))
-    z_b = float(np.mean(half_b.to_mesh().vert_properties[:, 2]))
-    top_man, bottom_man = (half_a, half_b) if z_a >= z_b else (half_b, half_a)
-
-    if pegs is not None:
-        bottom_man = bottom_man + pegs
-        top_man = top_man - pin_holes
-
-    if params.mode == "open_layup":
-        keep_man = top_man if params.keep_side == "above" else bottom_man
+        keep = above if params.keep_side == "above" else below
         if params.trim_groove:
             groove, groove_info = hardware.trim_groove_solid(
                 bounds, block_min, block_max, z_split, params, warnings
             )
             if groove is not None:
-                keep_man = keep_man - groove
+                keep = keep - groove
                 hardware_meta["trim_groove"] = groove_info
-        halves = {"tool": mfld.to_trimesh(keep_man)}
-    else:
-        halves = {"top": mfld.to_trimesh(top_man), "bottom": mfld.to_trimesh(bottom_man)}
+        halves = {"tool": mfld.to_trimesh(keep)}
+        block_bounds = [block_min.tolist(), block_max.tolist()]
 
+    block_size = np.asarray(block_bounds[1]) - np.asarray(block_bounds[0])
     metadata = {
         "mode": params.mode,
         "parting_z_mm": z_split,
         "hardware": hardware_meta,
         "part": _mesh_stats(part),
         "block": {
-            "bounds": [block_min.tolist(), block_max.tolist()],
-            "volume": float(np.prod(block_max - block_min)),
+            "bounds": block_bounds,
+            "volume": float(np.prod(block_size)),
         },
         "halves": {name: _mesh_stats(h) for name, h in halves.items()},
+        **extra_meta,
     }
     return MoldResult(ok=True, halves=halves, warnings=warnings, metadata=metadata)
 
@@ -150,17 +152,35 @@ def _check_params(p: MoldParams) -> list[str]:
         errors.append(f"wall_margin_mm must be positive, got {p.wall_margin_mm:g}")
     if p.mode == "open_layup" and p.keep_side not in VALID_SIDES:
         errors.append(f"keep_side must be one of {VALID_SIDES}, got {p.keep_side!r}")
+    if p.mode == "compression":
+        if p.plunge_mm <= 0:
+            errors.append(f"plunge_mm must be positive, got {p.plunge_mm:g}")
+        if p.plug_border_mm < 2:
+            errors.append(f"plug_border_mm must be at least 2, got {p.plug_border_mm:g}")
+        if p.plug_clearance_mm < 0:
+            errors.append("plug_clearance_mm must be non-negative")
+        if not 0 <= p.plug_draft_deg <= 5:
+            errors.append(f"plug_draft_deg must be 0-5, got {p.plug_draft_deg:g}")
+        if p.lead_in_mm < 0:
+            errors.append("lead_in_mm must be non-negative")
+        if p.pry_slots and (p.pry_slot_width_mm <= 0 or p.pry_slot_depth_mm <= 0):
+            errors.append("pry_slot_width_mm and pry_slot_depth_mm must be positive")
+        if p.overflow_channels and (
+            not 1 <= p.overflow_per_edge <= 4
+            or p.overflow_width_mm <= 0
+            or p.overflow_depth_mm <= 0
+        ):
+            errors.append(
+                "overflow_per_edge must be 1-4 and overflow width/depth positive"
+            )
     if p.pins:
         if p.pin_radius_mm <= 0 or p.pin_height_mm <= 0:
             errors.append("pin_radius_mm and pin_height_mm must be positive")
         if p.pin_chamfer_mm < 0 or p.pin_clearance_mm < 0:
             errors.append("pin_chamfer_mm and pin_clearance_mm must be non-negative")
     if p.bolts:
-        if not 1 <= p.bolt_count <= 4:
-            errors.append(
-                f"bolt_count must be 1-4 (holes sit midway along the "
-                f"parting-face edges), got {p.bolt_count}"
-            )
+        if not 1 <= p.bolt_count <= 12:
+            errors.append(f"bolt_count must be 1-12, got {p.bolt_count}")
         if p.bolt_diameter_mm <= 0:
             errors.append(f"bolt_diameter_mm must be positive, got {p.bolt_diameter_mm:g}")
     if p.trim_groove and (p.trim_groove_offset_mm <= 0 or p.trim_groove_depth_mm <= 0):
@@ -169,12 +189,13 @@ def _check_params(p: MoldParams) -> list[str]:
 
 
 def _nudged_parting_height(part: trimesh.Trimesh, z: float, warnings: list[str]) -> float:
-    """Nudge the split height when part facets are coplanar with the plane.
+    """Nudge the parting height when part facets are coplanar with the plane.
 
-    A split exactly through coplanar facets is numerically ambiguous (the flat
-    cap and the cavity wall coincide). A ~1 µm nudge is physically invisible
-    but keeps the split unambiguous. float32 (manifold's vertex type) resolves
-    ~1e-7 relative, so 1e-3 mm is safely representable at part scale.
+    A pocket floor or plane split exactly through coplanar facets is
+    numerically ambiguous (the flat face and the cavity wall coincide). A
+    ~1 µm nudge is physically invisible but keeps the geometry unambiguous.
+    float32 (manifold's vertex type) resolves ~1e-7 relative, so 1e-3 mm is
+    safely representable at part scale.
     """
     diag = float(np.linalg.norm(part.extents))
     tol = 1e-8 * max(diag, 1.0)
