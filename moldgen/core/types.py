@@ -29,6 +29,23 @@ class MoldParams:
     keep_side:
         For open_layup only: which side of the parting plane to keep,
         "above" or "below".
+
+    Hardware (see hardware.py; features that don't fit are shrunk or skipped
+    with a warning, never a hard failure):
+
+    pins / pin_*:
+        Registration pins, compression mode only, on by default. Pegs on the
+        bottom half at the four parting-face corners (45° top chamfer),
+        matching oversized holes in the top half. pin_clearance_mm is radial:
+        0.15 suits resin-printed molds, use 0.25 for FDM.
+    bolts / bolt_*:
+        Vertical clamping-bolt through-holes, compression mode only, off by
+        default. bolt_count (1-4) holes midway along the parting-face edges;
+        hole diameter is bolt_diameter_mm plus a sliding-fit clearance.
+    trim_groove / trim_groove_*:
+        Open-layup mode only, off by default. A shallow V-groove rectangle
+        embossed on the flange face, trim_groove_offset_mm out from the part
+        bbox outline, as a trimming guide.
     """
 
     mode: str
@@ -36,6 +53,20 @@ class MoldParams:
     wall_margin_mm: float = 15.0
     cavity_offset_mm: float = 0.0
     keep_side: str = "below"
+    # registration pins — compression mode only
+    pins: bool = True
+    pin_radius_mm: float = 4.0
+    pin_height_mm: float = 8.0
+    pin_chamfer_mm: float = 0.5
+    pin_clearance_mm: float = 0.15
+    # clamping bolt through-holes — compression mode only
+    bolts: bool = False
+    bolt_count: int = 4
+    bolt_diameter_mm: float = 6.0
+    # flange trim groove — open-layup mode only
+    trim_groove: bool = False
+    trim_groove_offset_mm: float = 10.0
+    trim_groove_depth_mm: float = 0.3
 
 
 @dataclass
