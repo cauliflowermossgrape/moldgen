@@ -27,14 +27,15 @@ def box():
 
 
 def compression(**kw):
-    return MoldParams(mode="compression", parting_z_mm=0.0, **kw)
+    kw.setdefault("parting_z_mm", 0.0)
+    return MoldParams(mode="compression", **kw)
 
 
 def bare(**kw):
     """Everything optional off, no draft/lead-in: exact prism arithmetic."""
     base = dict(
         plug_draft_deg=0.0, lead_in_mm=0.0,
-        pins=False, pry_slots=False, overflow_channels=False,
+        pins=False, pry_slots=False, overflow_channels=False, jack_screws=False,
     )
     base.update(kw)
     return compression(**base)
@@ -240,6 +241,81 @@ def test_overflow_channels_cut_female_flange():
     d_male = plain.halves["male"].volume - flowed.halves["male"].volume
     assert d_female == pytest.approx(expected, rel=1e-3)
     assert d_male == pytest.approx(0.0, abs=1e-6)
+
+
+# --- demolding: jack screws, ejector, warnings --------------------------------
+
+
+def test_jack_screws_cut_male_plate_only():
+    part = sphere()
+    plain = generate_mold(part, bare())
+    jacked = generate_mold(part, bare(jack_screws=True, jack_screw_count=2))
+    assert jacked.ok, jacked.errors
+    assert all(h.is_watertight for h in jacked.halves.values())
+
+    info = jacked.metadata["hardware"]["jack_screws"]
+    assert len(info["centers"]) == 2
+    assert info["radius"] == pytest.approx(2.5)  # M6 − 1 mm tap fit, /2
+
+    # holes pierce only the male plate (top_z − z_flange thick)
+    area = 0.5 * CIRCULAR_SEGMENTS * np.sin(2 * np.pi / CIRCULAR_SEGMENTS) * info["radius"] ** 2
+    top_z = max(part.bounds[1][2], Z_FLANGE) + 22.0
+    d_male = plain.halves["male"].volume - jacked.halves["male"].volume
+    d_female = plain.halves["female"].volume - jacked.halves["female"].volume
+    assert d_male == pytest.approx(2 * area * (top_z - Z_FLANGE), rel=1e-3)
+    assert d_female == pytest.approx(0.0, abs=1e-6)
+
+    # diagonal: the two screws sit on opposite edges at different y
+    (x0, y0), (x1, y1) = info["centers"]
+    assert x0 != pytest.approx(x1)
+    assert y0 != pytest.approx(y1)
+
+
+def test_ejector_hole_pierces_female_base():
+    part = box()  # bottom face at z=-5, centroid at origin
+    plain = generate_mold(part, bare())
+    ejected = generate_mold(part, bare(ejector_holes=True))
+    assert ejected.ok, ejected.errors
+    female = ejected.halves["female"]
+    assert female.is_watertight
+
+    info = ejected.metadata["hardware"]["ejector"]
+    assert info["center"] == pytest.approx([0.0, 0.0], abs=1e-6)
+    assert any("wax or tape" in w for w in ejected.warnings)
+
+    # hole runs from the block bottom (−5−22) to the cavity floor (−5)
+    area = 0.5 * CIRCULAR_SEGMENTS * np.sin(2 * np.pi / CIRCULAR_SEGMENTS) * info["radius"] ** 2
+    removed = plain.halves["female"].volume - female.volume
+    assert removed == pytest.approx(area * 22.0, rel=1e-3)
+    # and the female now opens at its underside
+    assert female.bounds[0][2] == pytest.approx(-27.0, abs=1e-3)
+
+
+def test_demold_warnings():
+    # vertical box walls: no undercuts, but both cavities drag
+    res = generate_mold(box(), bare())
+    assert res.ok
+    drag = [w for w in res.warnings if "draft" in w and "demolding" in w]
+    assert any("female" in w for w in drag)
+    assert any("male" in w for w in drag)
+
+    # mushroom parted through the stem: the male cavity locks
+    stem = trimesh.creation.cylinder(radius=5.0, height=20.0, sections=64)
+    stem.apply_translation([0, 0, 10.0])
+    cap = trimesh.creation.cylinder(radius=15.0, height=5.0, sections=64)
+    cap.apply_translation([0, 0, 22.5])
+    from moldgen.core import mfld
+
+    mushroom = mfld.to_trimesh(mfld.to_manifold(stem) + mfld.to_manifold(cap))
+    res = generate_mold(mushroom, bare(parting_z_mm=10.0))
+    assert res.ok
+    assert any(
+        "undercut" in w and "male" in w and "lock" in w for w in res.warnings
+    )
+
+    # check can be disabled
+    res = generate_mold(box(), bare(demold_check=False))
+    assert not any("demolding" in w for w in res.warnings)
 
 
 # --- lead-in chamfer ---------------------------------------------------------

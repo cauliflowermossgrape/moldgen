@@ -48,6 +48,9 @@ def test_full_flow(client):
     assert max(an["undercut_faces"]) < up["triangles"]
     assert not an["top"]["likely_demoldable"]
     assert an["bottom"]["likely_demoldable"]
+    # the stem/cap walls are vertical: reported as low-draft drag area
+    assert an["low_draft_faces"]
+    assert an["bottom"]["low_draft_area_mm2"] > 0
 
     # analyze at the suggested height: clean
     an2 = client.post(
@@ -72,6 +75,7 @@ def test_full_flow(client):
     assert "bolts" in gen["metadata"]["hardware"]
     assert "pry_slots" in gen["metadata"]["hardware"]
     assert "overflow" in gen["metadata"]["hardware"]
+    assert "jack_screws" in gen["metadata"]["hardware"]
     assert gen["metadata"]["forged"]["plunge_mm"] == 10.0
     for name, info in gen["halves"].items():
         assert info["watertight"] is True

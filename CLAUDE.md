@@ -43,6 +43,15 @@ Features (see `forged.py` + `hardware.py`):
 - **Registration pins** on the female flange corners, holes in the male plate.
 - **Clamping bolt holes** distributed around the flange band.
 - **Pry (wedge) slots** across the flange seam to break the halves apart.
+- **Jack screws**: tap-sized holes through the male plate over the female
+  flange — a threaded bolt bears on the female face and jacks the halves
+  apart evenly (holes are bolt Ø − 1 mm for self-threading in prints).
+- **Ejector pin hole** (opt-in): through the female base into the cavity at
+  the part centroid; plug with wax/tape before layup.
+- **Demolding check** (on by default): generation warns per half about
+  undercut area (part locks) and low-draft walls within `min_draft_deg` of
+  vertical (part drags; common practice is 1-2° minimum draft). The Analyze
+  view colors undercuts red and low-draft walls amber.
 - **Resin overflow channels** on the female flange, from pinch gap to outer
   wall, preventing hydraulic lock.
 - Shared **wall draft** (default 1°) on plug and pocket so the gap stays

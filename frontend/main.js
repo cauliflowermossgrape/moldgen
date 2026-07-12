@@ -102,6 +102,7 @@ const planeMaterial = new THREE.MeshBasicMaterial({
 
 const NEUTRAL = [1, 1, 1];
 const UNDERCUT = [0.95, 0.23, 0.2];
+const LOW_DRAFT = [0.98, 0.72, 0.25];
 
 // --- Helpers -----------------------------------------------------------------
 
@@ -278,26 +279,37 @@ async function analyze() {
     });
     resetAnalysis();
     const colors = state.partMesh.geometry.attributes.color;
-    for (const f of body.undercut_faces) {
-      colors.setXYZ(3 * f, ...UNDERCUT);
-      colors.setXYZ(3 * f + 1, ...UNDERCUT);
-      colors.setXYZ(3 * f + 2, ...UNDERCUT);
-    }
+    const paint = (faces, rgb) => {
+      for (const f of faces) {
+        colors.setXYZ(3 * f, ...rgb);
+        colors.setXYZ(3 * f + 1, ...rgb);
+        colors.setXYZ(3 * f + 2, ...rgb);
+      }
+    };
+    paint(body.low_draft_faces, LOW_DRAFT);
+    paint(body.undercut_faces, UNDERCUT);
     colors.needsUpdate = true;
 
     for (const half of ['bottom', 'top']) {
       const el = $(`verdict-${half}`);
       const v = body[half];
-      el.textContent = v.likely_demoldable
-        ? 'releases cleanly'
-        : `${v.undercut_area_mm2.toFixed(0)} mm² undercut`;
-      el.className = v.likely_demoldable ? 'good' : 'bad';
+      if (!v.likely_demoldable) {
+        el.textContent = `${v.undercut_area_mm2.toFixed(0)} mm² undercut — locks`;
+        el.className = 'bad';
+      } else if (v.low_draft_area_mm2 > 0) {
+        el.textContent = `${v.low_draft_area_mm2.toFixed(0)} mm² < ${body.min_draft_deg}° draft — drags`;
+        el.className = 'warn';
+      } else {
+        el.textContent = 'releases cleanly';
+        el.className = 'good';
+      }
     }
     $('verdicts').classList.remove('hidden');
     showPartView();
-    setStatus(body.undercut_faces.length
-      ? `${body.undercut_faces.length} undercut faces highlighted`
-      : 'no undercuts at this parting height');
+    const n = body.undercut_faces.length + body.low_draft_faces.length;
+    setStatus(n
+      ? `${body.undercut_faces.length} undercut (red) + ${body.low_draft_faces.length} low-draft (amber) faces highlighted`
+      : 'no undercuts or low-draft walls at this parting height');
   } catch (err) {
     setStatus(err.message, true);
   } finally {
@@ -322,6 +334,10 @@ function currentParams() {
     lead_in_mm: parseFloat($('lead-in').value),
     pry_slots: $('pry-slots').checked,
     overflow_channels: $('overflow').checked,
+    jack_screws: $('jack-screws').checked,
+    jack_screw_count: parseInt($('jack-count').value, 10),
+    ejector_holes: $('ejector').checked,
+    min_draft_deg: parseFloat($('min-draft').value),
     pins: $('pins').checked,
     pin_clearance_mm: parseFloat($('pin-clearance').value),
     bolts: $('bolts').checked,
@@ -428,6 +444,7 @@ for (const radio of document.querySelectorAll('input[name="mold-style"]')) {
     const openLayup = radio.value === 'open_layup' && radio.checked;
     $('open-layup-opts').classList.toggle('hidden', !openLayup);
     $('forged-panel').classList.toggle('hidden', openLayup);
+    $('demold-panel').classList.toggle('hidden', openLayup);
     $('hardware-panel').classList.toggle('hidden', openLayup);
   });
 }

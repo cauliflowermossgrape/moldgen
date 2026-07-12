@@ -32,7 +32,7 @@ def bare_forged(**kw):
         mode="compression", parting_z_mm=0.0, wall_margin_mm=MARGIN,
         plunge_mm=PLUNGE, plug_border_mm=BORDER, plug_clearance_mm=CLEARANCE,
         plug_draft_deg=0.0, lead_in_mm=0.0,
-        pins=False, pry_slots=False, overflow_channels=False,
+        pins=False, pry_slots=False, overflow_channels=False, jack_screws=False,
     )
     base.update(kw)
     return MoldParams(**base)

@@ -18,6 +18,7 @@ import trimesh
 from . import forged, hardware, mfld
 from .offset import offset_mesh
 from .types import MoldParams, MoldResult
+from .undercuts import analyze_undercuts
 from .validate import validate_and_repair
 
 VALID_MODES = ("compression", "open_layup")
@@ -80,6 +81,9 @@ def generate_mold(mesh: trimesh.Trimesh, params: MoldParams) -> MoldResult:
 
     z_split = _nudged_parting_height(part, z, warnings)
 
+    if params.demold_check:
+        _demold_warnings(part, z_split, params, warnings)
+
     hardware_meta: dict = {}
     extra_meta: dict = {}
     if params.mode == "compression":
@@ -87,7 +91,8 @@ def generate_mold(mesh: trimesh.Trimesh, params: MoldParams) -> MoldResult:
             warnings.append("trim groove applies only to open-layup tools; ignored")
         try:
             female, male, forged_meta, hardware_meta = forged.build(
-                part_man, bounds, z_split, params, warnings
+                part_man, bounds, z_split, params, warnings,
+                part_centroid_xy=part.center_mass[:2],
             )
         except ValueError as exc:
             return MoldResult(ok=False, errors=[str(exc)], warnings=warnings)
@@ -144,6 +149,37 @@ def generate_mold(mesh: trimesh.Trimesh, params: MoldParams) -> MoldResult:
     return MoldResult(ok=True, halves=halves, warnings=warnings, metadata=metadata)
 
 
+def _demold_warnings(
+    part: trimesh.Trimesh, z_split: float, params: MoldParams, warnings: list[str]
+) -> None:
+    """Warn about geometry that will fight demolding, per half.
+
+    Undercuts mean the part mechanically locks in that half; low-draft walls
+    (within min_draft_deg of vertical) release but drag and score — common
+    molding practice wants 1-2° minimum draft on them.
+    """
+    report = analyze_undercuts(part, z_split, min_draft_deg=params.min_draft_deg)
+    if params.mode == "compression":
+        sides = (("female", report.bottom), ("male", report.top))
+    else:
+        side = report.bottom if params.keep_side == "below" else report.top
+        sides = (("tool", side),)
+    for name, half in sides:
+        if half.undercut_area_mm2 > 0:
+            warnings.append(
+                f"demolding: {half.undercut_area_mm2:.0f} mm² of undercuts in the "
+                f"{name} cavity — the part will mechanically lock; move the parting "
+                "plane (see the suggested height) or reshape the part"
+            )
+        elif half.low_draft_area_mm2 > 0:
+            warnings.append(
+                f"demolding: {half.low_draft_area_mm2:.0f} mm² of walls in the "
+                f"{name} cavity have <{params.min_draft_deg:g}° draft; the part "
+                "will drag on release — common practice is 1-2° minimum draft, or "
+                "rely on release agent, pry slots and jack screws"
+            )
+
+
 def _check_params(p: MoldParams) -> list[str]:
     errors = []
     if p.mode not in VALID_MODES:
@@ -173,6 +209,15 @@ def _check_params(p: MoldParams) -> list[str]:
             errors.append(
                 "overflow_per_edge must be 1-4 and overflow width/depth positive"
             )
+        if p.jack_screws:
+            if not 1 <= p.jack_screw_count <= 4:
+                errors.append(f"jack_screw_count must be 1-4, got {p.jack_screw_count}")
+            if p.jack_screw_diameter_mm <= 1:
+                errors.append("jack_screw_diameter_mm must be greater than 1")
+        if p.ejector_holes and p.ejector_diameter_mm <= 0:
+            errors.append("ejector_diameter_mm must be positive")
+    if p.demold_check and not 0 < p.min_draft_deg <= 10:
+        errors.append(f"min_draft_deg must be in (0, 10], got {p.min_draft_deg:g}")
     if p.pins:
         if p.pin_radius_mm <= 0 or p.pin_height_mm <= 0:
             errors.append("pin_radius_mm and pin_height_mm must be positive")
