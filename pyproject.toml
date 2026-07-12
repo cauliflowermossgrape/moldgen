@@ -27,6 +27,11 @@ dev = [
     "pytest>=8.0",
     "httpx>=0.27",
 ]
+# STEP/IGES input via OpenCascade — the OCP wheel is several hundred MB,
+# hence opt-in
+step = [
+    "cadquery>=2.4",
+]
 
 [tool.setuptools.packages.find]
 include = ["moldgen*"]

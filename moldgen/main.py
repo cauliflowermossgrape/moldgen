@@ -16,7 +16,7 @@ from pathlib import Path
 
 import numpy as np
 import trimesh
-from fastapi import FastAPI, HTTPException, UploadFile
+from fastapi import FastAPI, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -30,7 +30,8 @@ from moldgen.core import (
     generate_mold,
     suggest_parting_plane,
 )
-from moldgen.core.io import SUPPORTED_SUFFIXES, load_part
+from moldgen.core import step_io
+from moldgen.core.io import load_part, supported_suffixes
 
 ROOT = Path(__file__).resolve().parent.parent
 FRONTEND_DIR = ROOT / "frontend"
@@ -78,16 +79,23 @@ def _load_mesh(mesh_id: str) -> trimesh.Trimesh:
 
 @app.get("/api/health")
 def health() -> dict:
-    return {"status": "ok", "version": __version__}
+    return {"status": "ok", "version": __version__, "step_support": step_io.HAS_STEP}
 
 
 @app.post("/api/upload")
-async def upload(file: UploadFile) -> dict:
+async def upload(
+    file: UploadFile,
+    linear_deflection_mm: float = Form(step_io.DEFAULT_LINEAR_DEFLECTION_MM),
+    angular_deflection_deg: float = Form(step_io.DEFAULT_ANGULAR_DEFLECTION_DEG),
+) -> dict:
     suffix = Path(file.filename or "").suffix.lower()
-    if suffix not in SUPPORTED_SUFFIXES:
+    if suffix not in supported_suffixes():
+        if suffix in step_io.CAD_SUFFIXES:
+            raise HTTPException(status_code=400, detail=step_io.INSTALL_HINT)
         raise HTTPException(
             status_code=400,
-            detail=f"unsupported file type {suffix or '(none)'}; use STL, 3MF or OBJ",
+            detail=f"unsupported file type {suffix or '(none)'}; "
+            f"use {', '.join(sorted(supported_suffixes()))}",
         )
     mesh_id = uuid.uuid4().hex[:12]
     mesh_dir = WORKDIR / mesh_id
@@ -95,7 +103,11 @@ async def upload(file: UploadFile) -> dict:
     original = mesh_dir / f"original{suffix}"
     original.write_bytes(await file.read())
     try:
-        mesh = load_part(original)
+        mesh = load_part(
+            original,
+            linear_deflection_mm=linear_deflection_mm,
+            angular_deflection_deg=angular_deflection_deg,
+        )
     except Exception as exc:
         shutil.rmtree(mesh_dir, ignore_errors=True)
         raise HTTPException(status_code=400, detail=f"could not read {file.filename}: {exc}")

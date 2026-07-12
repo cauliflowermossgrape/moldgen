@@ -34,6 +34,20 @@ make dev      # sets up .venv, installs deps, runs http://localhost:8000
 make test     # runs pytest
 ```
 
+### Optional: STEP / IGES input
+
+Mesh formats (STL/3MF/OBJ) work out of the box. To upload STEP or IGES
+directly, install the `step` extra — it pulls cadquery/OpenCascade, whose
+wheels are several hundred MB, so it's opt-in:
+
+```sh
+.venv/bin/pip install "moldgen[step]"
+```
+
+BRep surfaces are tessellated on upload with configurable deflections
+(defaults: 0.05 mm linear sagitta, 0.3° angular). The UI detects support at
+runtime and enables the formats + tessellation settings automatically.
+
 ## Layout
 
 ```

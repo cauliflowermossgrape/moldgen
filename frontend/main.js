@@ -206,6 +206,10 @@ async function uploadFile(file) {
   try {
     const fd = new FormData();
     fd.append('file', file, file.name);
+    if (!$('step-opts').classList.contains('hidden')) {
+      fd.append('linear_deflection_mm', $('lin-defl').value);
+      fd.append('angular_deflection_deg', $('ang-defl').value);
+    }
     const res = await fetch('/api/upload', { method: 'POST', body: fd });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(body.detail || `upload failed (${res.status})`);
@@ -426,5 +430,14 @@ $('generate').addEventListener('click', generate);
 
 fetch('/api/health')
   .then((r) => r.json())
-  .then((info) => setStatus(`ready — backend v${info.version}`))
+  .then((info) => {
+    if (info.step_support) {
+      $('part-upload').accept += ',.step,.stp,.iges,.igs';
+      $('format-list').textContent = 'STL · 3MF · OBJ · STEP · IGES — millimeters';
+      $('step-opts').classList.remove('hidden');
+    } else {
+      $('step-note').classList.remove('hidden');
+    }
+    setStatus(`ready — backend v${info.version}`);
+  })
   .catch(() => setStatus('backend unreachable', true));
