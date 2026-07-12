@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>moldgen</title>
+  <link rel="stylesheet" href="style.css" />
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.166.1/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.166.1/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <main id="app">
+    <div id="viewport"></div>
+    <aside id="sidebar">
+      <h1>moldgen</h1>
+      <p class="tagline">Two-part molds for carbon fiber work</p>
+
+      <section class="panel">
+        <h2>Part</h2>
+        <label class="file-drop" for="part-upload">
+          Upload STL / 3MF
+          <input type="file" id="part-upload" accept=".stl,.3mf" disabled />
+        </label>
+        <p class="hint">Upload coming soon</p>
+      </section>
+
+      <section class="panel">
+        <h2>Mold style</h2>
+        <label class="radio">
+          <input type="radio" name="mold-style" value="compression" checked />
+          Compression / forged carbon
+        </label>
+        <label class="radio">
+          <input type="radio" name="mold-style" value="open-layup" />
+          Open layup (single-sided tool)
+        </label>
+      </section>
+
+      <section class="panel">
+        <h2>Generate</h2>
+        <button id="generate" disabled>Generate mold</button>
+      </section>
+
+      <footer id="status">ready</footer>
+    </aside>
+  </main>
+  <script type="module" src="main.js"></script>
+</body>
+</html>
