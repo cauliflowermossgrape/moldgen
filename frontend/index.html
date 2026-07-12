@@ -21,7 +21,20 @@
     </div>
     <aside id="sidebar">
       <h1>moldgen</h1>
-      <p class="tagline">Two-part molds for carbon fiber work</p>
+      <p class="tagline">Compression &amp; layup molds for carbon fiber</p>
+
+      <section class="panel">
+        <h2>Process</h2>
+        <label class="field"
+          title="How you'll make the mold. Sets the recommended fit clearances below (you can still edit them): resin prints are dimensionally tight (0.15 mm), FDM prints need more play (0.25–0.3 mm), CNC-machined tools can run 0.1 mm like Easy Composites' machined forged tools.">
+          <span>Mold made by</span>
+          <select id="printer">
+            <option value="resin" selected>Resin print (SLA)</option>
+            <option value="fdm">FDM print</option>
+            <option value="cnc">CNC machined</option>
+          </select>
+        </label>
+      </section>
 
       <section class="panel">
         <h2>Part</h2>
@@ -32,10 +45,14 @@
           <input type="file" id="part-upload" accept=".stl,.3mf,.obj" />
         </label>
         <div id="step-opts" class="hidden">
-          <label class="field"><span>STEP linear defl. (mm)</span>
+          <label class="field"
+            title="Max chord deviation (sagitta) when tessellating STEP/IGES curves into triangles. Smaller = smoother cavity surface, more triangles, slower booleans.">
+            <span>STEP linear defl. (mm)</span>
             <input type="number" id="lin-defl" value="0.05" step="0.01" min="0.005" />
           </label>
-          <label class="field"><span>STEP angular defl. (°)</span>
+          <label class="field"
+            title="Max angle between adjacent facet normals when tessellating. Smaller follows tight curvature better at the cost of triangle count.">
+            <span>STEP angular defl. (°)</span>
             <input type="number" id="ang-defl" value="0.3" step="0.1" min="0.05" />
           </label>
         </div>
@@ -50,65 +67,113 @@
 
       <section class="panel">
         <h2>Parting plane</h2>
-        <div class="row">
+        <div class="row"
+          title="Height of the parting plane through the part. The cavity below it forms in the female half; above it, in the male plug face. Put it at the part's widest section — use Analyze to check.">
           <input type="range" id="parting-z" step="0.1" disabled />
           <output id="parting-z-out">—</output>
         </div>
         <p class="hint">
           <button class="link hidden" id="use-suggested"></button>
         </p>
-        <button id="analyze" class="secondary" disabled>Analyze undercuts</button>
+        <button id="analyze" class="secondary" disabled
+          title="First-order undercut check: faces that fight the pull direction of their half turn red. It won't catch silhouette-occluded undercuts (e.g. tilted bores).">Analyze undercuts</button>
         <div id="verdicts" class="hidden">
-          <div class="kv"><span>Bottom half (−Z pull)</span><span id="verdict-bottom"></span></div>
-          <div class="kv"><span>Top half (+Z pull)</span><span id="verdict-top"></span></div>
+          <div class="kv"><span>Female half (−Z pull)</span><span id="verdict-bottom"></span></div>
+          <div class="kv"><span>Male half (+Z pull)</span><span id="verdict-top"></span></div>
         </div>
       </section>
 
       <section class="panel">
         <h2>Mold style</h2>
-        <label class="radio">
+        <label class="radio"
+          title="Forged carbon / compression: telescoping two-part mold. The male plug pistons into the female pocket, so fiber can't jam a flat seam and excess resin escapes up the wall gap.">
           <input type="radio" name="mold-style" value="compression" checked />
           Compression / forged carbon
         </label>
-        <label class="radio">
+        <label class="radio"
+          title="Single-sided female tool for hand layup or vacuum bagging. The flat face around the cavity becomes the bagging-tape flange.">
           <input type="radio" name="mold-style" value="open_layup" />
           Open layup (single-sided tool)
         </label>
         <div id="open-layup-opts" class="hidden">
-          <label class="field"><span>Keep side</span>
+          <label class="field" title="Which side of the parting plane becomes the tool.">
+            <span>Keep side</span>
             <select id="keep-side">
               <option value="below">Below plane</option>
               <option value="above">Above plane</option>
             </select>
           </label>
-          <label class="check"><input type="checkbox" id="trim-groove" /> Trim groove on flange</label>
+          <label class="check"
+            title="Embosses a shallow 0.3 mm V-groove rectangle on the flange as a guide line for trimming the cured laminate.">
+            <input type="checkbox" id="trim-groove" /> Trim groove on flange</label>
         </div>
-        <label class="field"><span>Wall margin (mm)</span>
-          <input type="number" id="wall-margin" value="15" min="4" step="1" />
+        <label class="field"
+          title="Mold material around the part's bounding box. The flange band (margin − plug border − clearance) needs ~14 mm for pins and bolts; the generator warns or errors if it's too tight.">
+          <span>Wall margin (mm)</span>
+          <input type="number" id="wall-margin" value="22" min="8" step="1" />
         </label>
-        <label class="field"><span>Cavity offset (mm)</span>
+        <label class="field"
+          title="Uniformly inflates the cavity, e.g. 0.1–0.2 mm to compensate print shrinkage or leave release-agent allowance. Large values can self-intersect on fine detail.">
+          <span>Cavity offset (mm)</span>
           <input type="number" id="cavity-offset" value="0" step="0.05" />
         </label>
       </section>
 
+      <section class="panel" id="forged-panel">
+        <h2>Telescoping section</h2>
+        <label class="field"
+          title="How far the male plug pistons into the female pocket. Easy Composites: ~6 mm for small tools, 15–20 mm for large ones — allow 2–3× the part depth of travel so there's room to load the chopped fiber charge before compression.">
+          <span>Plunge depth (mm)</span>
+          <input type="number" id="plunge" value="10" min="3" step="1" />
+        </label>
+        <label class="field"
+          title="Flat shelf around the part on the plug face; sets how far the pinch-off walls sit from the cavity edge.">
+          <span>Plug border (mm)</span>
+          <input type="number" id="plug-border" value="8" min="2" step="1" />
+        </label>
+        <label class="field"
+          title="Radial gap between plug and pocket walls — the pinch-off. Excess resin escapes up this gap while fibers are retained (~0.1 mm machined, 0.15 resin-printed, 0.25–0.3 FDM). Too big and fiber squeezes out; too small and the mold jams.">
+          <span>Plug clearance (mm)</span>
+          <input type="number" id="plug-clearance" value="0.15" min="0" step="0.05" />
+        </label>
+        <label class="field"
+          title="Taper on the telescoping walls; both walls share it so the pinch gap stays constant over the plunge. 0° is a true piston like machined tools; 1–2° releases far more easily on printed molds.">
+          <span>Wall draft (°)</span>
+          <input type="number" id="plug-draft" value="1" min="0" max="5" step="0.5" />
+        </label>
+        <label class="field"
+          title="Chamfer at the pocket mouth — this much horizontal, twice as much vertical (Easy Composites use 1×2 mm) — so the plug self-locates as it enters.">
+          <span>Lead-in (mm)</span>
+          <input type="number" id="lead-in" value="1" min="0" step="0.5" />
+        </label>
+        <label class="check"
+          title="Wedge slots cut across the flange seam on two opposite edges. Drive a flat screwdriver or plastic wedge in to break the cured seam open — molds without them are genuinely hard to open.">
+          <input type="checkbox" id="pry-slots" checked /> Pry slots</label>
+        <label class="check"
+          title="Shallow channels on the female flange running from the pinch gap to the outer wall, so squeezed-out resin has somewhere to go and hydraulic lock can't stop the mold closing fully.">
+          <input type="checkbox" id="overflow" checked /> Resin overflow channels</label>
+      </section>
+
       <section class="panel" id="hardware-panel">
         <h2>Hardware</h2>
-        <label class="check"><input type="checkbox" id="pins" checked /> Registration pins</label>
-        <label class="field" id="pin-clearance-field"><span>Pin clearance</span>
-          <select id="pin-clearance">
-            <option value="0.15">0.15 mm — resin</option>
-            <option value="0.25">0.25 mm — FDM</option>
-          </select>
+        <label class="check"
+          title="Chamfered pegs on the female flange corners with matching oversized holes in the male plate, so the halves align repeatably every closure.">
+          <input type="checkbox" id="pins" checked /> Registration pins</label>
+        <label class="field" id="pin-clearance-field"
+          title="Radial oversize of the holes vs the pegs. 0.15 mm suits resin prints, 0.25 mm FDM, 0.1 mm machined.">
+          <span>Pin clearance (mm)</span>
+          <input type="number" id="pin-clearance" value="0.15" min="0" step="0.05" />
         </label>
-        <label class="check"><input type="checkbox" id="bolts" /> Clamping bolt holes</label>
+        <label class="check"
+          title="Vertical through-holes for clamping bolts, distributed around the flange band. Easy Composites recommend keeping spacing within 50–75 mm on printed tools so the flange can't gape between clamps.">
+          <input type="checkbox" id="bolts" /> Clamping bolt holes</label>
         <div id="bolt-opts" class="hidden">
-          <label class="field"><span>Bolts</span>
-            <select id="bolt-count">
-              <option value="2">2</option>
-              <option value="4" selected>4</option>
-            </select>
+          <label class="field" title="Total number of bolts, spread evenly around the flange (1–12).">
+            <span>Bolts</span>
+            <input type="number" id="bolt-count" value="4" min="1" max="12" step="1" />
           </label>
-          <label class="field"><span>Size</span>
+          <label class="field" title="Bolt size; the hole gets a 0.5 mm sliding-fit allowance on diameter.">
+            <span>Size</span>
             <select id="bolt-diameter">
               <option value="6">M6</option>
               <option value="8">M8</option>
@@ -120,11 +185,13 @@
       <section class="panel">
         <button id="generate" disabled>Generate mold</button>
         <div id="result" class="hidden">
-          <div class="row" id="explode-row">
+          <div class="row" id="explode-row"
+            title="Slides the halves apart along Z so you can inspect the cavity, pins and pinch walls.">
             <span class="lbl">Explode</span>
             <input type="range" id="explode" min="0" max="1" step="0.01" value="0" />
           </div>
-          <label class="check"><input type="checkbox" id="ghost" /> Ghost part in cavity</label>
+          <label class="check" title="Shows the original part translucently inside the cavity.">
+            <input type="checkbox" id="ghost" /> Ghost part in cavity</label>
           <div id="downloads"></div>
           <ul id="gen-warnings" class="warnings"></ul>
         </div>

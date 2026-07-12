@@ -1,7 +1,8 @@
-"""Tests for mold hardware: registration pins, bolt holes, trim groove.
+"""Tests for forged-mold hardware: telescoping fit, registration pins, bolt
+holes, pry slots, overflow channels, lead-in chamfer.
 
-Pin geometry is measured directly off the output meshes: in the bottom half,
-the only material above the parting plane is the pegs, and manifold's
+Pin geometry is measured directly off the output meshes: in the female half,
+the only material above the flange plane is the pegs, and manifold's
 cylinders place vertices exactly on the requested radius, so radial distances
 from the pin centers recover peg/hole radii to float32 precision.
 """
@@ -11,19 +12,35 @@ import pytest
 import trimesh
 
 from moldgen.core import MoldParams, generate_mold
-from moldgen.core.hardware import CIRCULAR_SEGMENTS, HOLE_OVERDEPTH
+from moldgen.core.hardware import CIRCULAR_SEGMENTS, HOLE_OVERDEPTH, PRY_REACH
+
+PLUNGE = 10.0
+Z_FLANGE = PLUNGE  # all tests part at z=0
 
 
 def sphere():
     return trimesh.creation.icosphere(subdivisions=3, radius=20.0)
 
 
+def box():
+    return trimesh.creation.box(extents=[30.0, 20.0, 10.0])
+
+
 def compression(**kw):
     return MoldParams(mode="compression", parting_z_mm=0.0, **kw)
 
 
+def bare(**kw):
+    """Everything optional off, no draft/lead-in: exact prism arithmetic."""
+    base = dict(
+        plug_draft_deg=0.0, lead_in_mm=0.0,
+        pins=False, pry_slots=False, overflow_channels=False,
+    )
+    base.update(kw)
+    return compression(**base)
+
+
 def max_radius(mesh, center, z_lo, z_hi, window):
-    """Largest xy-distance from `center` among vertices in the z-slab."""
     v = mesh.vertices
     d = np.linalg.norm(v[:, :2] - np.asarray(center), axis=1)
     mask = (v[:, 2] > z_lo) & (v[:, 2] < z_hi) & (d < window)
@@ -31,20 +48,60 @@ def max_radius(mesh, center, z_lo, z_hi, window):
     return float(d[mask].max())
 
 
+# --- telescoping fit ---------------------------------------------------------
+
+
+def test_male_plug_fits_inside_female_pocket():
+    res = generate_mold(box(), bare())
+    assert res.ok, res.errors
+    female, male = res.halves["female"], res.halves["male"]
+
+    def wall_x(mesh, lo, hi, pick):
+        # prism walls only carry vertices at their corner rings (z=0 and
+        # z=z_flange), so the probe slab must include those
+        v = mesh.vertices
+        mask = (
+            (v[:, 2] > -0.5) & (v[:, 2] < Z_FLANGE + 0.5)
+            & (np.abs(v[:, 0]) > lo) & (np.abs(v[:, 0]) < hi)
+        )
+        assert mask.any()
+        return pick(np.abs(v[mask, 0]))
+
+    plug_wall = wall_x(male, 20.0, 30.0, np.max)  # plug wall: bbox 15 + border 8
+    pocket_wall = wall_x(female, 20.0, 30.0, np.min)
+    assert plug_wall == pytest.approx(23.0, abs=1e-3)
+    assert pocket_wall > plug_wall  # the male always enters the female
+    assert pocket_wall - plug_wall == pytest.approx(0.15, abs=1e-3)
+
+
+def test_forged_metadata():
+    res = generate_mold(sphere(), compression())
+    assert res.ok, res.errors
+    forged = res.metadata["forged"]
+    assert forged["z_flange"] == pytest.approx(Z_FLANGE, abs=1e-2)
+    assert forged["plunge_mm"] == PLUNGE
+    assert forged["pocket_clearance_mm"] == 0.15
+
+
+# --- registration pins -------------------------------------------------------
+
+
 def test_pins_present_by_default():
     res = generate_mold(sphere(), compression())
     assert res.ok, res.errors
-    top, bottom = res.halves["top"], res.halves["bottom"]
-    assert top.is_watertight and bottom.is_watertight
+    female, male = res.halves["female"], res.halves["male"]
+    assert female.is_watertight and male.is_watertight
 
     info = res.metadata["hardware"]["pins"]
     assert len(info["centers"]) == 4
     assert info["radius"] == pytest.approx(4.0)
-    # pegs rise exactly pin_height above the parting face (z_split = 0)
-    assert bottom.bounds[1][2] == pytest.approx(info["height"], abs=1e-3)
-    # every pin center has peg material above the parting plane around it
+    # pegs rise exactly pin_height above the flange plane
+    assert female.bounds[1][2] == pytest.approx(Z_FLANGE + info["height"], abs=1e-3)
     for center in info["centers"]:
-        r_meas = max_radius(bottom, center, 0.05, info["height"], info["radius"] + 1.0)
+        r_meas = max_radius(
+            female, center, Z_FLANGE + 0.05, Z_FLANGE + info["height"],
+            info["radius"] + 1.0,
+        )
         assert r_meas == pytest.approx(info["radius"], abs=1e-3)
 
 
@@ -52,8 +109,7 @@ def test_pins_absent_when_disabled():
     res = generate_mold(sphere(), compression(pins=False))
     assert res.ok, res.errors
     assert "pins" not in res.metadata["hardware"]
-    # nothing rises above the parting face without pegs
-    assert res.halves["bottom"].bounds[1][2] == pytest.approx(0.0, abs=1e-4)
+    assert res.halves["female"].bounds[1][2] == pytest.approx(Z_FLANGE, abs=1e-4)
 
 
 @pytest.mark.parametrize("clearance", [0.15, 0.25])
@@ -64,41 +120,44 @@ def test_peg_hole_radii_differ_by_exact_clearance(clearance):
     r, h, c = info["radius"], info["height"], info["chamfer"]
     center = info["centers"][0]
 
-    # peg: probe the straight section below the chamfer
-    r_peg = max_radius(res.halves["bottom"], center, 0.05, h - c + 0.01, r + 1.0)
-    # hole: probe up to and including the hole ceiling ring
+    r_peg = max_radius(
+        res.halves["female"], center,
+        Z_FLANGE + 0.05, Z_FLANGE + h - c + 0.01, r + 1.0,
+    )
     r_hole = max_radius(
-        res.halves["top"], center, 0.05, h + HOLE_OVERDEPTH + 0.1,
-        r + clearance + 1.0,
+        res.halves["male"], center,
+        Z_FLANGE + 0.05, Z_FLANGE + h + HOLE_OVERDEPTH + 0.1, r + clearance + 1.0,
     )
     assert r_peg == pytest.approx(r, abs=1e-3)
     assert r_hole - r_peg == pytest.approx(clearance, abs=1e-3)
 
 
-def test_pins_shrunk_when_margin_small():
-    # margin 8 → ring midline inset 4 → largest fitting radius 2
-    res = generate_mold(sphere(), compression(wall_margin_mm=8.0))
+def test_pins_shrunk_when_band_narrow():
+    # margin 17 → band ≈ 17 − 8 − 0.15 − draft growth → fitting radius < 4
+    res = generate_mold(sphere(), compression(wall_margin_mm=17.0))
     assert res.ok, res.errors
     assert any("pin radius shrunk" in w for w in res.warnings)
     info = res.metadata["hardware"]["pins"]
-    assert info["radius"] == pytest.approx(2.0)
+    assert 1.5 <= info["radius"] < 4.0
     assert all(h.is_watertight for h in res.halves.values())
 
 
-def test_pins_skipped_when_margin_tiny():
-    # margin 6 → largest fitting radius 1 < minimum useful radius
-    res = generate_mold(sphere(), compression(wall_margin_mm=6.0))
+def test_pins_skipped_when_band_tiny():
+    # margin 14.5 → band ≈ 6.2: legal, but no usable pin radius
+    res = generate_mold(sphere(), compression(wall_margin_mm=14.5))
     assert res.ok, res.errors
     assert any("pins skipped" in w for w in res.warnings)
     assert "pins" not in res.metadata["hardware"]
-    assert res.halves["bottom"].bounds[1][2] == pytest.approx(0.0, abs=1e-4)
+
+
+# --- clamping bolts ----------------------------------------------------------
 
 
 def test_bolt_holes_volume_and_count():
     part = sphere()
-    plain = generate_mold(part, compression(pins=False))
+    plain = generate_mold(part, bare())
     bolted = generate_mold(
-        part, compression(pins=False, bolts=True, bolt_count=4, bolt_diameter_mm=6.0)
+        part, bare(bolts=True, bolt_count=4, bolt_diameter_mm=6.0)
     )
     assert bolted.ok, bolted.errors
     assert all(h.is_watertight for h in bolted.halves.values())
@@ -108,22 +167,30 @@ def test_bolt_holes_volume_and_count():
     r = info["radius"]
     assert r == pytest.approx(3.25)  # M6/2 + 0.25 sliding clearance
 
-    # each hole removes exactly its polygon cross-section times half height
     area = 0.5 * CIRCULAR_SEGMENTS * np.sin(2 * np.pi / CIRCULAR_SEGMENTS) * r**2
-    height_bottom = 0.0 - (part.bounds[0][2] - 15.0)
-    removed = plain.halves["bottom"].volume - bolted.halves["bottom"].volume
-    assert removed == pytest.approx(4 * area * height_bottom, rel=1e-3)
+    bottom_z = part.bounds[0][2] - 22.0  # default wall margin
+    top_z = max(part.bounds[1][2], Z_FLANGE) + 22.0
+    d_female = plain.halves["female"].volume - bolted.halves["female"].volume
+    d_male = plain.halves["male"].volume - bolted.halves["male"].volume
+    assert d_female == pytest.approx(4 * area * (Z_FLANGE - bottom_z), rel=1e-3)
+    assert d_male == pytest.approx(4 * area * (top_z - Z_FLANGE), rel=1e-3)
 
 
 def test_bolt_count_two():
-    res = generate_mold(sphere(), compression(pins=False, bolts=True, bolt_count=2))
+    res = generate_mold(sphere(), bare(bolts=True, bolt_count=2))
     assert res.ok, res.errors
     info = res.metadata["hardware"]["bolts"]
     assert len(info["centers"]) == 2
-    # first two positions are the left/right edge midpoints: same y, mirrored x
     (x0, y0), (x1, y1) = info["centers"]
     assert y0 == pytest.approx(y1)
     assert x0 != pytest.approx(x1)
+
+
+def test_bolt_spacing_warning_on_large_mold():
+    slab = trimesh.creation.box(extents=[200.0, 200.0, 20.0])
+    res = generate_mold(slab, bare(bolts=True, bolt_count=4))
+    assert res.ok, res.errors
+    assert any("50-75 mm" in w for w in res.warnings)
 
 
 def test_bolts_ignored_in_open_layup():
@@ -136,10 +203,79 @@ def test_bolts_ignored_in_open_layup():
     assert any("bolt" in w for w in res.warnings)
 
 
+# --- pry slots ---------------------------------------------------------------
+
+
+def test_pry_slots_cut_both_halves():
+    part = box()
+    plain = generate_mold(part, bare())
+    pried = generate_mold(part, bare(pry_slots=True))
+    assert pried.ok, pried.errors
+    assert all(h.is_watertight for h in pried.halves.values())
+
+    info = pried.metadata["hardware"]["pry_slots"]
+    assert len(info["centers"]) == 2
+    removed_per_half = 2 * info["width"] * info["reach"] * info["depth"]
+    d_female = plain.halves["female"].volume - pried.halves["female"].volume
+    d_male = plain.halves["male"].volume - pried.halves["male"].volume
+    assert d_female == pytest.approx(removed_per_half, rel=1e-3)
+    assert d_male == pytest.approx(removed_per_half, rel=1e-3)
+
+
+# --- overflow channels -------------------------------------------------------
+
+
+def test_overflow_channels_cut_female_flange():
+    part = box()
+    plain = generate_mold(part, bare())
+    flowed = generate_mold(part, bare(overflow_channels=True, overflow_per_edge=2))
+    assert flowed.ok, flowed.errors
+    assert all(h.is_watertight for h in flowed.halves.values())
+
+    info = flowed.metadata["hardware"]["overflow"]
+    assert info["count"] == 8  # 2 per edge × 4 edges
+    band = 22.0 - 8.0 - 0.15  # margin − border − clearance (no draft)
+    expected = info["count"] * info["width"] * info["depth"] * band
+    d_female = plain.halves["female"].volume - flowed.halves["female"].volume
+    d_male = plain.halves["male"].volume - flowed.halves["male"].volume
+    assert d_female == pytest.approx(expected, rel=1e-3)
+    assert d_male == pytest.approx(0.0, abs=1e-6)
+
+
+# --- lead-in chamfer ---------------------------------------------------------
+
+
+def test_lead_in_widens_pocket_mouth():
+    part = box()
+    plain = generate_mold(part, bare())
+    led = generate_mold(part, bare(lead_in_mm=1.0))
+    assert led.ok, led.errors
+    female = led.halves["female"]
+    assert female.is_watertight
+    assert female.volume < plain.halves["female"].volume
+
+    # funnel rim at the flange plane sits lead_in outside the pocket wall;
+    # the rim rectangle only has corner vertices, so probe near a corner
+    v = female.vertices
+    pocket_wall = 15.0 + 8.0 + 0.15
+    at_rim = (
+        (np.abs(v[:, 2] - Z_FLANGE) < 1e-3)
+        & (np.abs(v[:, 0]) > pocket_wall + 0.2)
+        & (np.abs(v[:, 0]) < pocket_wall + 2.0)
+    )
+    assert at_rim.any()
+    rim_x = float(np.abs(v[at_rim, 0]).min())
+    assert rim_x - pocket_wall == pytest.approx(1.0, abs=1e-2)
+
+
+# --- trim groove (open layup, unchanged) --------------------------------------
+
+
 def test_trim_groove():
     part = sphere()
-    base = MoldParams(mode="open_layup", parting_z_mm=0.0, keep_side="below")
-    plain = generate_mold(part, base)
+    plain = generate_mold(
+        part, MoldParams(mode="open_layup", parting_z_mm=0.0, keep_side="below")
+    )
     grooved = generate_mold(
         part,
         MoldParams(
@@ -154,7 +290,6 @@ def test_trim_groove():
     info = grooved.metadata["hardware"]["trim_groove"]
     x0, y0, x1, y1 = info["rect"]
     perimeter = 2 * ((x1 - x0) + (y1 - y0))
-    # V-groove removes ~depth² per unit length (45° V, depth deep)
     estimate = perimeter * info["depth"] ** 2
     removed = plain.halves["tool"].volume - tool.volume
     assert 0.5 * estimate < removed < 1.5 * estimate

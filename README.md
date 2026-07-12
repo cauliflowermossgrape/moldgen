@@ -6,11 +6,15 @@ machining.
 
 ## Mold styles
 
-- **Compression / forged carbon** — a two-part clamshell mold. The cavity is
-  the exact part shape, split across a flat parting plane. Chopped fiber +
-  epoxy is loaded in and the halves are pressed together. The mold gets
-  registration pins for alignment and clamping bolt holes; a small flash gap
-  at the parting line is acceptable.
+- **Compression / forged carbon** — a two-part **telescoping** mold: the male
+  half's plug pistons into the female half's pocket walls, so chopped fiber
+  can't jam a flat seam and excess resin escapes up the pinch-off gap while
+  fiber is retained. Includes registration pins, clamping bolt holes, pry
+  (wedge) slots for opening the cured mold, resin overflow channels, wall
+  draft and a lead-in chamfer. Defaults follow [Easy Composites' forged
+  carbon mould design guidance](https://www.easycomposites.co.uk/learning/forged-carbon-mould-design-and-optimisation),
+  with per-process clearance presets for resin-printed, FDM-printed and
+  CNC-machined tools.
 - **Open layup** — a single-sided female tool. You pick which side of the
   parting plane to keep; the flat parting face becomes a natural flange around
   the cavity for vacuum bagging tape.

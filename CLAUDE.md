@@ -24,15 +24,31 @@ This context drives all geometry features.
 
 ### 1. Compression / forged carbon
 
-A two-part clamshell mold. The cavity is the exact part shape, split across a
-**flat parting plane**. Chopped fiber + epoxy is loaded in and the halves are
-pressed together.
+A two-part **telescoping** (plunge) mold — NOT a flat clamshell. The female
+half's pocket walls rise `plunge_mm` above the parting plane and the male
+half's plug pistons down into them. This matters because chopped fiber loaded
+in the cavity would get caught at a flat seam and stop the mold from
+compressing; with a telescoping section the plug always closes fully, and the
+plug/pocket wall gap (the **pinch-off**, ~0.1 mm machined / 0.15 resin /
+0.25-0.3 FDM) doubles as the resin escape path while fiber is retained.
 
-Requirements:
-- **Registration pins** so the halves align repeatably.
-- **Clamping bolt holes** to press and hold the halves together under load.
-- A small **flash gap** at the parting line is acceptable (excess resin
-  squeezes out there).
+Design values follow Easy Composites' forged carbon mould guidance
+(easycomposites.co.uk/learning/forged-carbon-mould-design-and-optimisation):
+piston depth ~6 mm small tools up to 15-20 mm large (2-3x part depth of
+travel to load the charge), 1x2 mm lead-in chamfer at the pocket mouth,
+wedge features at the seam for separation, bolt spacing within 50-75 mm on
+printed tools.
+
+Features (see `forged.py` + `hardware.py`):
+- **Registration pins** on the female flange corners, holes in the male plate.
+- **Clamping bolt holes** distributed around the flange band.
+- **Pry (wedge) slots** across the flange seam to break the halves apart.
+- **Resin overflow channels** on the female flange, from pinch gap to outer
+  wall, preventing hydraulic lock.
+- Shared **wall draft** (default 1°) on plug and pocket so the gap stays
+  constant; 0° = true piston like machined tools.
+
+Halves are keyed/exported as **"female"** and **"male"**.
 
 ### 2. Open layup
 
@@ -49,11 +65,17 @@ used for vacuum bagging tape (sealant tape sticks to the flat flange).
   return errors, they don't raise.
   - `mfld.py` — trimesh ↔ manifold3d conversion (note: manifold stores
     vertices as float32).
+  - `forged.py` — telescoping compression construction: female block minus
+    drafted pocket prism, male drafted plug + plate, lead-in funnel, and
+    flange-hardware orchestration. Errors (ValueError) when the flange band
+    (margin − border − clearance − draft growth) is under 6 mm.
   - `hardware.py` — registration pins (pegs + clearance holes), clamping
-    bolt through-holes, flange trim groove. All built as manifold solids
-    and applied with booleans; features that don't fit the wall margin are
-    shrunk or skipped with a warning, never a hard failure. Positions live
-    on the margin-ring midline (wall_margin/2 in from the outer wall).
+    bolt through-holes with 50-75 mm spacing warning, pry slots, resin
+    overflow channels, flange trim groove. All built as manifold solids
+    and applied with booleans; features that don't fit are shrunk or
+    skipped with a warning, never a hard failure. Positions live on the
+    flange-band midline, with (x, y, radius) keep-out collision checks
+    between feature types.
   - `validate.py` — watertightness checks + best-effort trimesh repair.
   - `offset.py` — vertex-normal cavity offset (approximate; see docstring
     for self-intersection caveats).
