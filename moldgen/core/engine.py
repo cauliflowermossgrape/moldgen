@@ -10,7 +10,7 @@ from __future__ import annotations
 import numpy as np
 import trimesh
 
-from . import mfld
+from . import hardware, mfld
 from .offset import offset_mesh
 from .types import MoldParams, MoldResult
 from .validate import validate_and_repair
@@ -76,9 +76,30 @@ def generate_mold(mesh: trimesh.Trimesh, params: MoldParams) -> MoldResult:
     mold = mfld.box(block_min, block_max) - part_man
 
     z_split = _nudged_parting_height(part, z, warnings)
+
+    hardware_meta: dict = {}
+    pegs = pin_holes = None
+    if params.mode == "compression":
+        if params.trim_groove:
+            warnings.append("trim groove applies only to open-layup tools; ignored")
+        if params.pins:
+            pegs, pin_holes, pin_info = hardware.registration_pins(
+                block_min, block_max, z_split, params, warnings
+            )
+            if pin_info is not None:
+                hardware_meta["pins"] = pin_info
+        if params.bolts:
+            bolt_cyls, bolt_info = hardware.bolt_holes(
+                block_min, block_max, params, hardware_meta.get("pins"), warnings
+            )
+            if bolt_cyls is not None:
+                mold = mold - bolt_cyls
+                hardware_meta["bolts"] = bolt_info
+    elif params.bolts:
+        warnings.append("bolt holes apply only to compression molds; ignored")
+
     half_a, half_b = mold.split_by_plane((0.0, 0.0, 1.0), z_split)
-    mesh_a, mesh_b = mfld.to_trimesh(half_a), mfld.to_trimesh(half_b)
-    if mesh_a.is_empty or mesh_b.is_empty:
+    if half_a.is_empty() or half_b.is_empty():
         return MoldResult(
             ok=False,
             errors=["splitting at the parting plane produced an empty half"],
@@ -86,19 +107,31 @@ def generate_mold(mesh: trimesh.Trimesh, params: MoldParams) -> MoldResult:
         )
     # Assign top/bottom by measured position rather than trusting the
     # split_by_plane ordering convention.
-    if mesh_a.centroid[2] >= mesh_b.centroid[2]:
-        top, bottom = mesh_a, mesh_b
-    else:
-        top, bottom = mesh_b, mesh_a
+    z_a = float(np.mean(half_a.to_mesh().vert_properties[:, 2]))
+    z_b = float(np.mean(half_b.to_mesh().vert_properties[:, 2]))
+    top_man, bottom_man = (half_a, half_b) if z_a >= z_b else (half_b, half_a)
+
+    if pegs is not None:
+        bottom_man = bottom_man + pegs
+        top_man = top_man - pin_holes
 
     if params.mode == "open_layup":
-        halves = {"tool": top if params.keep_side == "above" else bottom}
+        keep_man = top_man if params.keep_side == "above" else bottom_man
+        if params.trim_groove:
+            groove, groove_info = hardware.trim_groove_solid(
+                bounds, block_min, block_max, z_split, params, warnings
+            )
+            if groove is not None:
+                keep_man = keep_man - groove
+                hardware_meta["trim_groove"] = groove_info
+        halves = {"tool": mfld.to_trimesh(keep_man)}
     else:
-        halves = {"top": top, "bottom": bottom}
+        halves = {"top": mfld.to_trimesh(top_man), "bottom": mfld.to_trimesh(bottom_man)}
 
     metadata = {
         "mode": params.mode,
         "parting_z_mm": z_split,
+        "hardware": hardware_meta,
         "part": _mesh_stats(part),
         "block": {
             "bounds": [block_min.tolist(), block_max.tolist()],
@@ -117,6 +150,21 @@ def _check_params(p: MoldParams) -> list[str]:
         errors.append(f"wall_margin_mm must be positive, got {p.wall_margin_mm:g}")
     if p.mode == "open_layup" and p.keep_side not in VALID_SIDES:
         errors.append(f"keep_side must be one of {VALID_SIDES}, got {p.keep_side!r}")
+    if p.pins:
+        if p.pin_radius_mm <= 0 or p.pin_height_mm <= 0:
+            errors.append("pin_radius_mm and pin_height_mm must be positive")
+        if p.pin_chamfer_mm < 0 or p.pin_clearance_mm < 0:
+            errors.append("pin_chamfer_mm and pin_clearance_mm must be non-negative")
+    if p.bolts:
+        if not 1 <= p.bolt_count <= 4:
+            errors.append(
+                f"bolt_count must be 1-4 (holes sit midway along the "
+                f"parting-face edges), got {p.bolt_count}"
+            )
+        if p.bolt_diameter_mm <= 0:
+            errors.append(f"bolt_diameter_mm must be positive, got {p.bolt_diameter_mm:g}")
+    if p.trim_groove and (p.trim_groove_offset_mm <= 0 or p.trim_groove_depth_mm <= 0):
+        errors.append("trim_groove_offset_mm and trim_groove_depth_mm must be positive")
     return errors
 
 

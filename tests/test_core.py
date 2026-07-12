@@ -29,7 +29,7 @@ def block_volume(part, margin=MARGIN):
 def test_sphere_compression():
     sphere = trimesh.creation.icosphere(subdivisions=3, radius=20.0)
     res = generate_mold(
-        sphere, MoldParams(mode="compression", parting_z_mm=0.0, wall_margin_mm=MARGIN)
+        sphere, MoldParams(mode="compression", parting_z_mm=0.0, wall_margin_mm=MARGIN, pins=False)
     )
     assert res.ok, res.errors
     top, bottom = res.halves["top"], res.halves["bottom"]
@@ -53,7 +53,7 @@ def test_tube_annular_cross_section():
     assert tube.is_watertight
 
     res = generate_mold(
-        tube, MoldParams(mode="compression", parting_z_mm=0.0, wall_margin_mm=MARGIN)
+        tube, MoldParams(mode="compression", parting_z_mm=0.0, wall_margin_mm=MARGIN, pins=False)
     )
     assert res.ok, res.errors
     top, bottom = res.halves["top"], res.halves["bottom"]
@@ -76,7 +76,7 @@ def test_rotated_box_watertight():
         trimesh.transformations.rotation_matrix(np.radians(30), [1.0, 1.0, 0.0])
     )
     res = generate_mold(
-        box, MoldParams(mode="compression", parting_z_mm=0.0, wall_margin_mm=MARGIN)
+        box, MoldParams(mode="compression", parting_z_mm=0.0, wall_margin_mm=MARGIN, pins=False)
     )
     assert res.ok, res.errors
     top, bottom = res.halves["top"], res.halves["bottom"]
@@ -90,7 +90,7 @@ def test_coplanar_facets_nudged():
     # produce a broken mesh
     box = trimesh.creation.box(extents=[30.0, 20.0, 10.0])  # top face at z=5
     res = generate_mold(
-        box, MoldParams(mode="compression", parting_z_mm=5.0, wall_margin_mm=MARGIN)
+        box, MoldParams(mode="compression", parting_z_mm=5.0, wall_margin_mm=MARGIN, pins=False)
     )
     assert res.ok, res.errors
     assert any("nudged" in w for w in res.warnings)
@@ -121,9 +121,9 @@ def test_open_layup_keep_below():
 
 def test_cavity_offset_grows_cavity():
     sphere = trimesh.creation.icosphere(subdivisions=3, radius=20.0)
-    plain = generate_mold(sphere, MoldParams(mode="compression", parting_z_mm=0.0))
+    plain = generate_mold(sphere, MoldParams(mode="compression", parting_z_mm=0.0, pins=False))
     offset = generate_mold(
-        sphere, MoldParams(mode="compression", parting_z_mm=0.0, cavity_offset_mm=0.5)
+        sphere, MoldParams(mode="compression", parting_z_mm=0.0, cavity_offset_mm=0.5, pins=False)
     )
     assert plain.ok and offset.ok
 
@@ -147,7 +147,7 @@ def test_non_watertight_input_structured_error():
         faces=[[0, 1, 2], [0, 2, 3]],
         process=False,
     )
-    res = generate_mold(sheet, MoldParams(mode="compression", parting_z_mm=0.0))
+    res = generate_mold(sheet, MoldParams(mode="compression", parting_z_mm=0.0, pins=False))
     assert res.ok is False
     assert res.errors
     assert res.halves == {}

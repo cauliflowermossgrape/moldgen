@@ -49,6 +49,11 @@ used for vacuum bagging tape (sealant tape sticks to the flat flange).
   return errors, they don't raise.
   - `mfld.py` — trimesh ↔ manifold3d conversion (note: manifold stores
     vertices as float32).
+  - `hardware.py` — registration pins (pegs + clearance holes), clamping
+    bolt through-holes, flange trim groove. All built as manifold solids
+    and applied with booleans; features that don't fit the wall margin are
+    shrunk or skipped with a warning, never a hard failure. Positions live
+    on the margin-ring midline (wall_margin/2 in from the outer wall).
   - `validate.py` — watertightness checks + best-effort trimesh repair.
   - `offset.py` — vertex-normal cavity offset (approximate; see docstring
     for self-intersection caveats).
