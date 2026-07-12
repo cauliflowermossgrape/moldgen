@@ -46,6 +46,24 @@ class MoldParams:
         resin-printed, 0.25-0.3 FDM). Both walls share plug_draft_deg of
         taper so the gap stays constant. lead_in_mm cuts a chamfer at the
         pocket mouth (that much horizontal, twice vertical).
+    demold_check / min_draft_deg:
+        When on, generation analyzes the part against each half's pull
+        direction and warns about undercuts (part mechanically locks) and
+        low-draft walls (within min_draft_deg of vertical — they release but
+        drag/score; common practice is 1-2° minimum draft).
+    jack_screws / jack_screw_*:
+        Tap-sized holes through the male plate over the female flange
+        (compression only, on by default). Threading a bolt in bears on the
+        female face and jacks the halves apart evenly — the screw
+        counterpart to the pry slots, standard mould-making practice. Hole
+        is bolt diameter − 1 mm so the bolt cuts its own thread in a
+        printed plate.
+    ejector_holes / ejector_diameter_mm:
+        Optional ejector-pin hole through the female base into the cavity at
+        the part's centroid (compression only, off by default) — push a pin
+        or dowel through to eject a stuck part, standard compression-molding
+        practice. Plug it with wax/tape before layup; the part carries a
+        small witness mark.
     pry_slots / pry_slot_*:
         Wedge slots cut across the flange seam (both halves) on two opposite
         outer edges, for driving a wedge or screwdriver in to separate the
@@ -85,6 +103,14 @@ class MoldParams:
     plug_clearance_mm: float = 0.15
     plug_draft_deg: float = 1.0
     lead_in_mm: float = 1.0
+    # demolding analysis & hardware
+    demold_check: bool = True
+    min_draft_deg: float = 1.0
+    jack_screws: bool = True
+    jack_screw_count: int = 2
+    jack_screw_diameter_mm: float = 6.0
+    ejector_holes: bool = False
+    ejector_diameter_mm: float = 6.0
     # pry (wedge) slots across the flange seam — compression mode only
     pry_slots: bool = True
     pry_slot_width_mm: float = 20.0

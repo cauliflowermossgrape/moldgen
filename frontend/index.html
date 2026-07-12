@@ -154,6 +154,26 @@
           <input type="checkbox" id="overflow" checked /> Resin overflow channels</label>
       </section>
 
+      <section class="panel" id="demold-panel">
+        <h2>Demolding</h2>
+        <label class="field"
+          title="Walls within this angle of vertical are flagged: they release but drag and score during demolding. Common molding practice is 1–2° minimum draft. Also drives the amber faces in Analyze.">
+          <span>Min draft warn (°)</span>
+          <input type="number" id="min-draft" value="1" min="0.5" max="10" step="0.5" />
+        </label>
+        <label class="check"
+          title="Tap-sized holes through the male plate over the female flange. Thread a bolt in and its tip bears on the female face, jacking the halves apart evenly — the screw counterpart to the pry slots. Hole is bolt Ø − 1 mm so the bolt self-threads in a printed plate.">
+          <input type="checkbox" id="jack-screws" checked /> Jack screws</label>
+        <label class="field" id="jack-count-field"
+          title="Number of jacking screws, alternating edges so opposing screws sit diagonal (1–4).">
+          <span>Jack screws</span>
+          <input type="number" id="jack-count" value="2" min="1" max="4" step="1" />
+        </label>
+        <label class="check"
+          title="Ejector-pin hole through the female base into the cavity at the part's centroid — push a pin or dowel through to eject a stuck part, standard compression-molding practice. Plug with wax/tape before layup; leaves a small witness mark on the part.">
+          <input type="checkbox" id="ejector" /> Ejector pin hole</label>
+      </section>
+
       <section class="panel" id="hardware-panel">
         <h2>Hardware</h2>
         <label class="check"

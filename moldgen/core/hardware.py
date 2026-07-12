@@ -181,6 +181,79 @@ def bolt_holes(block_min, block_max, inset, params, pin_info, warnings):
     return _union(cylinders), info
 
 
+def jack_screw_holes(block_min, block_max, inset, params, avoid, warnings):
+    """Jacking-screw holes through the male plate, over the female flange.
+
+    Thread a bolt in and its tip bears on the female flange face, jacking
+    the halves apart evenly — the screw counterpart to pry slots, standard
+    mould-making practice for stubborn tools. The hole is tap-sized (bolt
+    diameter − 1 mm) so the bolt cuts its own thread in a printed plate;
+    drill and tap to suit on machined tools. Subtract from the MALE only —
+    the female face under each hole must stay solid to push against.
+    """
+    r = (params.jack_screw_diameter_mm - 1.0) / 2.0
+    if r <= 0 or r > inset - RING_CLEARANCE:
+        warnings.append("flange band too narrow for jack screws; skipped")
+        return None, None
+
+    x0, y0, x1, y1 = _ring_rect(block_min, block_max, inset)
+    # alternate left/right edges, staggered so opposing screws sit diagonal
+    layout = [(0, 1 / 3), (1, 2 / 3), (0, 2 / 3), (1, 1 / 3)]
+    scan = (0.0, 0.08, -0.08, 0.16, -0.16, 0.24, -0.24)
+
+    kept = []
+    for edge, t_base in layout[: params.jack_screw_count]:
+        x = x0 if edge == 0 else x1
+        placed = None
+        for dt in scan:
+            t = t_base + dt
+            if not 0.1 <= t <= 0.9:
+                continue
+            y = y0 + t * (y1 - y0)
+            if all(math.hypot(x - ax, y - ay) > r + ar + 1.5 for ax, ay, ar in avoid):
+                placed = (x, y)
+                break
+        if placed is None:
+            warnings.append("no clear spot for a jack screw; one skipped")
+            continue
+        kept.append(placed)
+    if not kept:
+        return None, None
+
+    z0 = float(block_min[2])  # generous span; only the male plate intersects it
+    height = float(block_max[2] - block_min[2]) + 2.0
+    holes = [
+        Manifold.cylinder(height, r, r, CIRCULAR_SEGMENTS).translate((x, y, z0))
+        for x, y in kept
+    ]
+    info = {
+        "centers": [[float(x), float(y)] for x, y in kept],
+        "radius": float(r),
+        "bolt_diameter": float(params.jack_screw_diameter_mm),
+    }
+    return _union(holes), info
+
+
+def ejector_hole(block_min, center_xy, z_split, params, warnings):
+    """Ejector-pin hole through the female base into the cavity floor.
+
+    Standard compression-molding practice: a pin or dowel pushed through it
+    ejects a stuck part. Placed at the part's volume centroid — the deepest,
+    stickiest region of the cavity. The hole opens into the cavity, so it
+    must be plugged (wax/tape) before layup and the part carries a small
+    witness mark. Subtract from the FEMALE only.
+    """
+    r = params.ejector_diameter_mm / 2.0
+    x, y = (float(v) for v in center_xy)
+    z0 = float(block_min[2]) - 1.0
+    hole = Manifold.cylinder(z_split - z0, r, r, CIRCULAR_SEGMENTS).translate((x, y, z0))
+    warnings.append(
+        "ejector hole opens into the cavity — plug it with wax or tape before "
+        "layup; the part will carry a small witness mark"
+    )
+    return hole, {"center": [x, y], "radius": float(r)}
+
+
 def pry_slot_solids(block_min, block_max, z_flange, params, avoid, warnings):
     """Wedge slots across the flange seam, subtracted from BOTH halves.
 

@@ -60,6 +60,13 @@ class GenerateRequest(BaseModel):
     plug_clearance_mm: float = 0.15
     plug_draft_deg: float = 1.0
     lead_in_mm: float = 1.0
+    demold_check: bool = True
+    min_draft_deg: float = 1.0
+    jack_screws: bool = True
+    jack_screw_count: int = 2
+    jack_screw_diameter_mm: float = 6.0
+    ejector_holes: bool = False
+    ejector_diameter_mm: float = 6.0
     pry_slots: bool = True
     pry_slot_width_mm: float = 20.0
     pry_slot_depth_mm: float = 3.0
@@ -152,18 +159,22 @@ async def upload(
 def analyze(req: AnalyzeRequest) -> dict:
     mesh = _load_mesh(req.mesh_id)
     report = analyze_undercuts(mesh, req.parting_z_mm)
+
+    def half(h):
+        return {
+            "undercut_area_mm2": h.undercut_area_mm2,
+            "low_draft_area_mm2": h.low_draft_area_mm2,
+            "likely_demoldable": h.likely_demoldable,
+        }
+
     return {
         "parting_z_mm": report.parting_z_mm,
+        "min_draft_deg": report.min_draft_deg,
         "undercut_faces": np.flatnonzero(report.face_is_undercut).tolist(),
+        "low_draft_faces": np.flatnonzero(report.face_is_low_draft).tolist(),
         "undercut_area_mm2": report.undercut_area_mm2,
-        "bottom": {
-            "undercut_area_mm2": report.bottom.undercut_area_mm2,
-            "likely_demoldable": report.bottom.likely_demoldable,
-        },
-        "top": {
-            "undercut_area_mm2": report.top.undercut_area_mm2,
-            "likely_demoldable": report.top.likely_demoldable,
-        },
+        "bottom": half(report.bottom),
+        "top": half(report.top),
     }
 
 

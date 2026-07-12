@@ -49,11 +49,12 @@ def _prism(cx, cy, w, h, z0, height, grow_per_side=0.0):
     return Manifold.extrude(cs, height, 0, 0.0, scale).translate((cx, cy, z0))
 
 
-def build(part_man, part_bounds, z_split, params, warnings):
+def build(part_man, part_bounds, z_split, params, warnings, part_centroid_xy=None):
     """Construct the female and male halves of a telescoping mold.
 
-    Returns (female, male, meta) manifolds + metadata. Raises ValueError when
-    the requested dimensions cannot produce a usable flange band.
+    Returns (female, male, meta, hw_meta). Raises ValueError when the
+    requested dimensions cannot produce a usable flange band.
+    `part_centroid_xy` locates the optional ejector hole.
     """
     m = params.wall_margin_mm
     (px0, py0, pz0), (px1, py1, pz1) = np.asarray(part_bounds, dtype=float)
@@ -147,6 +148,15 @@ def build(part_man, part_bounds, z_split, params, warnings):
             hw_meta["bolts"] = bolt_info
             avoid += [(x, y, bolt_info["radius"]) for x, y in bolt_info["centers"]]
 
+    if params.jack_screws:
+        jacks, jack_info = hardware.jack_screw_holes(
+            block_min, block_max, inset, params, avoid, warnings
+        )
+        if jacks is not None:
+            male = male - jacks
+            hw_meta["jack_screws"] = jack_info
+            avoid += [(x, y, jack_info["radius"]) for x, y in jack_info["centers"]]
+
     if params.pry_slots:
         slots, pry_info = hardware.pry_slot_solids(
             block_min, block_max, z_flange, params, avoid, warnings
@@ -172,6 +182,12 @@ def build(part_man, part_bounds, z_split, params, warnings):
         if chans is not None:
             female = female - chans
             hw_meta["overflow"] = of_info
+
+    if params.ejector_holes:
+        center = part_centroid_xy if part_centroid_xy is not None else (cx, cy)
+        hole, ej_info = hardware.ejector_hole(block_min, center, z_split, params, warnings)
+        female = female - hole
+        hw_meta["ejector"] = ej_info
 
     meta["block_bounds"] = [block_min.tolist(), block_max.tolist()]
     return female, male, meta, hw_meta

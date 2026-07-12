@@ -10,8 +10,11 @@ machining.
   half's plug pistons into the female half's pocket walls, so chopped fiber
   can't jam a flat seam and excess resin escapes up the pinch-off gap while
   fiber is retained. Includes registration pins, clamping bolt holes, pry
-  (wedge) slots for opening the cured mold, resin overflow channels, wall
-  draft and a lead-in chamfer. Defaults follow [Easy Composites' forged
+  (wedge) slots and jack screws for opening the cured mold, an optional
+  ejector-pin hole, resin overflow channels, wall draft and a lead-in
+  chamfer. Generation runs a demolding check: undercuts (part locks) and
+  low-draft walls (part drags; <1–2° from vertical) are reported per half
+  and highlighted red/amber in the analyzer. Defaults follow [Easy Composites' forged
   carbon mould design guidance](https://www.easycomposites.co.uk/learning/forged-carbon-mould-design-and-optimisation),
   with per-process clearance presets for resin-printed, FDM-printed and
   CNC-machined tools.
