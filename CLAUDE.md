@@ -58,6 +58,10 @@ used for vacuum bagging tape (sealant tape sticks to the flat flange).
   - `offset.py` — vertex-normal cavity offset (approximate; see docstring
     for self-intersection caveats).
   - `io.py` — `load_part` (STL/3MF/OBJ) and `export_stl` (binary).
+  - `undercuts.py` — `analyze_undercuts` (first-order per-face normal check
+    against the ±Z pull directions; does NOT catch silhouette-occluded
+    undercuts — that needs visibility testing) and `suggest_parting_plane`
+    (scans 50 candidate heights for minimum undercut area).
 - `moldgen/main.py` — FastAPI app, serves `/api/*` and the static frontend.
 - Tests generate primitives programmatically (no fixture files) and verify
   mold halves by exact volume arithmetic — manifold booleans are exact on
