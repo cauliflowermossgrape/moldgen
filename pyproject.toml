@@ -17,6 +17,9 @@ dependencies = [
     "scipy>=1.11",
     "networkx>=3.2",
     "lxml>=5.0",
+    # trimesh uses this to sniff ASCII-vs-binary STL; without it a corrupt
+    # upload surfaces as a confusing "No module named charset_normalizer"
+    "charset-normalizer>=3.0",
 ]
 
 [project.optional-dependencies]
