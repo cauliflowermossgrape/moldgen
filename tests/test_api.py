@@ -102,6 +102,41 @@ def test_generate_open_layup(client):
     assert "trim_groove" in gen["metadata"]["hardware"]
 
 
+def test_orient_lay_on_face_and_reset(client):
+    up = upload_mushroom(client)  # extents 30 x 30 x 25, stem up
+
+    # lay the part on its +X side: height becomes the old x extent
+    resp = client.post(
+        "/api/orient", json={"mesh_id": up["mesh_id"], "down": [1, 0, 0]}
+    )
+    assert resp.status_code == 200
+    o = resp.json()
+    assert o["triangles"] == up["triangles"]  # rotation preserves face order
+    assert o["extents"][2] == pytest.approx(30.0, abs=0.1)
+    # rested on the plate: bottom at z=0, centered in xy
+    assert o["bounds"][0][2] == pytest.approx(0.0, abs=1e-6)
+    assert (o["bounds"][0][0] + o["bounds"][1][0]) / 2 == pytest.approx(0.0, abs=1e-6)
+
+    # generation works in the new orientation
+    gen = client.post(
+        "/api/generate",
+        json={"mesh_id": up["mesh_id"], "parting_z_mm": o["suggested_parting_z_mm"]},
+    ).json()
+    assert gen["ok"] is True, gen.get("errors")
+
+    # reset restores the as-uploaded orientation
+    r = client.post("/api/orient", json={"mesh_id": up["mesh_id"], "reset": True}).json()
+    assert r["extents"] == pytest.approx(up["extents"], abs=1e-4)
+    for restored, uploaded in zip(r["bounds"], up["bounds"]):
+        assert restored == pytest.approx(uploaded, abs=1e-4)
+
+    # bad vectors are rejected
+    bad = client.post("/api/orient", json={"mesh_id": up["mesh_id"], "down": [0, 0, 0]})
+    assert bad.status_code == 400
+    bad = client.post("/api/orient", json={"mesh_id": up["mesh_id"]})
+    assert bad.status_code == 400
+
+
 def test_generate_prepreg(client):
     up = upload_mushroom(client)
     gen = client.post(
