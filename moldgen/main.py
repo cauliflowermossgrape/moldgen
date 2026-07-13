@@ -81,6 +81,13 @@ class GenerateRequest(BaseModel):
     bolt_diameter_mm: float = 6.0
     trim_groove: bool = False
     trim_groove_offset_mm: float = 10.0
+    trim_allowance_mm: float = 8.0
+    trim_kick_deg: float = 5.0
+    tape_line: bool = True
+    tape_zone_mm: float = 15.0
+    flange_bolt_holes: bool = False
+    flange_hole_diameter_mm: float = 6.1
+    flange_hole_spacing_mm: float = 90.0
 
 
 def _part_path(mesh_id: str) -> Path:

@@ -97,6 +97,30 @@ def analyze_undercuts(
     )
 
 
+def sharp_edge_length_mm(
+    mesh: trimesh.Trimesh,
+    parting_z_mm: float,
+    side: str = "below",
+    angle_deg: float = 45.0,
+) -> float:
+    """Total length of sharp part edges on one side of the parting plane.
+
+    Fabric-drape heuristic for laminating tools: sharp convex part edges
+    become tight internal mold corners that prepreg fabric bridges over;
+    sharp concave ones become knife-edge mold ridges (resin-rich, fragile).
+    Easy Composites recommend generous fillets — both kinds are counted.
+    """
+    angles = mesh.face_adjacency_angles
+    sharp = angles > math.radians(angle_deg)
+    edges = mesh.face_adjacency_edges[sharp]
+    if len(edges) == 0:
+        return 0.0
+    points = mesh.vertices[edges]  # (n, 2, 3)
+    mid_z = points[:, :, 2].mean(axis=1)
+    mask = mid_z < parting_z_mm if side == "below" else mid_z > parting_z_mm
+    return float(np.linalg.norm(points[mask, 1] - points[mask, 0], axis=1).sum())
+
+
 def suggest_parting_plane(
     mesh: trimesh.Trimesh,
     samples: int = 50,

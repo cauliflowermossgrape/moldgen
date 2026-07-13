@@ -91,18 +91,24 @@
           Compression / forged carbon
         </label>
         <label class="radio"
-          title="Single-sided female tool for hand layup or vacuum bagging. The flat face around the cavity becomes the bagging-tape flange.">
+          title="Female laminating tool for prepreg or wet-lay vacuum work. The cavity runs 5–10 mm past the part edge with a 5° kick (Easy Composites' trim allowance: the laminate overruns the finished edge, and the kick aids release and leaves a witness line to trim to). Flange carries the sealant tape.">
+          <input type="radio" name="mold-style" value="prepreg" />
+          Prepreg / laminating tool
+        </label>
+        <label class="radio"
+          title="Single-sided female tool for simple hand layup. The flat face around the cavity becomes the bagging-tape flange. For prepreg work prefer the laminating tool above.">
           <input type="radio" name="mold-style" value="open_layup" />
-          Open layup (single-sided tool)
+          Open layup (basic tool)
+        </label>
+        <label class="field hidden" id="keep-side-field"
+          title="Which side of the parting plane becomes the tool cavity.">
+          <span>Keep side</span>
+          <select id="keep-side">
+            <option value="below">Below plane</option>
+            <option value="above">Above plane</option>
+          </select>
         </label>
         <div id="open-layup-opts" class="hidden">
-          <label class="field" title="Which side of the parting plane becomes the tool.">
-            <span>Keep side</span>
-            <select id="keep-side">
-              <option value="below">Below plane</option>
-              <option value="above">Above plane</option>
-            </select>
-          </label>
           <label class="check"
             title="Embosses a shallow 0.3 mm V-groove rectangle on the flange as a guide line for trimming the cured laminate.">
             <input type="checkbox" id="trim-groove" /> Trim groove on flange</label>
@@ -152,6 +158,36 @@
         <label class="check"
           title="Shallow channels on the female flange running from the pinch gap to the outer wall, so squeezed-out resin has somewhere to go and hydraulic lock can't stop the mold closing fully.">
           <input type="checkbox" id="overflow" checked /> Resin overflow channels</label>
+      </section>
+
+      <section class="panel hidden" id="prepreg-panel">
+        <h2>Laminating tool</h2>
+        <label class="field"
+          title="How far the mould surface continues past the finished part edge so the laminate can run out and be trimmed back. Easy Composites: 5–10 mm is sufficient for prepreg; use more for resin infusion.">
+          <span>Trim allowance (mm)</span>
+          <input type="number" id="trim-allowance" value="8" min="2" max="30" step="1" />
+        </label>
+        <label class="field"
+          title="Outward kick on the run-out wall. Easy Composites use 5°: it aids release of the part from the mould AND leaves a slight witness line on the part giving a visible line to trim to.">
+          <span>Kick angle (°)</span>
+          <input type="number" id="trim-kick" value="5" min="0" max="15" step="1" />
+        </label>
+        <label class="check"
+          title="Shallow scribe loop on the flange marking the inner edge of the vacuum-bag sealant tape zone — keep layup materials inside it, tape outside. A closed loop inside the bag, so it can't leak.">
+          <input type="checkbox" id="tape-line" checked /> Sealant-tape zone line</label>
+        <label class="field"
+          title="Width of flange reserved for sealant tape at the outer edge (gum tape is ~12 mm wide plus working room).">
+          <span>Tape zone (mm)</span>
+          <input type="number" id="tape-zone" value="15" min="10" max="40" step="1" />
+        </label>
+        <label class="check"
+          title="Split-mould bush/dowel holes through the flange: 6.1 mm for the M6 bush system, placed 20–25 mm from the mould surface edge at 75–100 mm spacing (Easy Composites). Use them to bolt on a matching half, a backing frame, or to dowel a split mould.">
+          <input type="checkbox" id="flange-holes" /> Flange bush holes</label>
+        <label class="field" id="flange-spacing-field"
+          title="Target spacing between bush holes; count per edge is computed from it. Easy Composites recommend 75–100 mm.">
+          <span>Hole spacing (mm)</span>
+          <input type="number" id="flange-spacing" value="90" min="40" max="200" step="10" />
+        </label>
       </section>
 
       <section class="panel" id="demold-panel">

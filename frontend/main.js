@@ -344,6 +344,12 @@ function currentParams() {
     bolt_count: parseInt($('bolt-count').value, 10),
     bolt_diameter_mm: parseFloat($('bolt-diameter').value),
     trim_groove: $('trim-groove').checked,
+    trim_allowance_mm: parseFloat($('trim-allowance').value),
+    trim_kick_deg: parseFloat($('trim-kick').value),
+    tape_line: $('tape-line').checked,
+    tape_zone_mm: parseFloat($('tape-zone').value),
+    flange_bolt_holes: $('flange-holes').checked,
+    flange_hole_spacing_mm: parseFloat($('flange-spacing').value),
   };
 }
 
@@ -439,13 +445,30 @@ $('use-suggested').addEventListener('click', () => {
   showPartView();
 });
 
+// per-mode defaults: forged tools need flange room for pins/bolts (22 mm),
+// prepreg tools ~30 mm of bagging flange and >3° draft (Easy Composites),
+// a basic open-layup tool just needs a modest flange
+const MODE_DEFAULTS = {
+  compression: { margin: 22, minDraft: 1 },
+  prepreg: { margin: 30, minDraft: 3 },
+  open_layup: { margin: 15, minDraft: 1 },
+};
+
+function applyMode(mode) {
+  const compression = mode === 'compression';
+  $('keep-side-field').classList.toggle('hidden', compression);
+  $('open-layup-opts').classList.toggle('hidden', mode !== 'open_layup');
+  $('prepreg-panel').classList.toggle('hidden', mode !== 'prepreg');
+  $('forged-panel').classList.toggle('hidden', !compression);
+  $('demold-panel').classList.toggle('hidden', !compression);
+  $('hardware-panel').classList.toggle('hidden', !compression);
+  $('wall-margin').value = MODE_DEFAULTS[mode].margin;
+  $('min-draft').value = MODE_DEFAULTS[mode].minDraft;
+}
+
 for (const radio of document.querySelectorAll('input[name="mold-style"]')) {
   radio.addEventListener('change', () => {
-    const openLayup = radio.value === 'open_layup' && radio.checked;
-    $('open-layup-opts').classList.toggle('hidden', !openLayup);
-    $('forged-panel').classList.toggle('hidden', openLayup);
-    $('demold-panel').classList.toggle('hidden', openLayup);
-    $('hardware-panel').classList.toggle('hidden', openLayup);
+    if (radio.checked) applyMode(radio.value);
   });
 }
 

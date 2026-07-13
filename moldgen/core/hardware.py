@@ -396,13 +396,27 @@ def overflow_channel_solids(
     return _union(channels), info
 
 
-def trim_groove_solid(part_bounds, block_min, block_max, z_split, params, warnings):
-    """V-groove rectangle embossed on the open-layup flange as a trim guide.
+def _v_groove_rect(x0, y0, x1, y1, z, depth):
+    """Rectangular V-groove (scribe) loop cut into a flat face at height z.
 
     Built from four square prisms rotated 45° about their long axis: the
     diamond cross-section reads as a `depth`-deep, 90°-included V where it
-    crosses the flange face. Returns (solid, info) or (None, None).
+    crosses the face.
     """
+    cx, cy = (x0 + x1) / 2.0, (y0 + y1) / 2.0
+    s = depth * math.sqrt(2.0)  # square side whose half-diagonal equals depth
+    lx = (x1 - x0) + 2.0 * depth  # run past the corners so the loop closes
+    ly = (y1 - y0) + 2.0 * depth
+    return _union([
+        Manifold.cube((lx, s, s), True).rotate((45.0, 0.0, 0.0)).translate((cx, y0, z)),
+        Manifold.cube((lx, s, s), True).rotate((45.0, 0.0, 0.0)).translate((cx, y1, z)),
+        Manifold.cube((s, ly, s), True).rotate((0.0, 45.0, 0.0)).translate((x0, cy, z)),
+        Manifold.cube((s, ly, s), True).rotate((0.0, 45.0, 0.0)).translate((x1, cy, z)),
+    ])
+
+
+def trim_groove_solid(part_bounds, block_min, block_max, z_split, params, warnings):
+    """V-groove rectangle embossed on the open-layup flange as a trim guide."""
     depth = params.trim_groove_depth_mm
     offset = params.trim_groove_offset_mm
     rect_min = np.asarray(part_bounds[0][:2], dtype=float) - offset
@@ -418,18 +432,100 @@ def trim_groove_solid(part_bounds, block_min, block_max, z_split, params, warnin
         return None, None
 
     (x0, y0), (x1, y1) = clamped_min, clamped_max
-    cx, cy = (x0 + x1) / 2.0, (y0 + y1) / 2.0
-    s = depth * math.sqrt(2.0)  # square side whose half-diagonal equals depth
-    lx = (x1 - x0) + 2.0 * depth  # run past the corners so the loop closes
-    ly = (y1 - y0) + 2.0 * depth
-    prisms = [
-        Manifold.cube((lx, s, s), True).rotate((45.0, 0.0, 0.0)).translate((cx, y0, z_split)),
-        Manifold.cube((lx, s, s), True).rotate((45.0, 0.0, 0.0)).translate((cx, y1, z_split)),
-        Manifold.cube((s, ly, s), True).rotate((0.0, 45.0, 0.0)).translate((x0, cy, z_split)),
-        Manifold.cube((s, ly, s), True).rotate((0.0, 45.0, 0.0)).translate((x1, cy, z_split)),
-    ]
     info = {
         "rect": [float(x0), float(y0), float(x1), float(y1)],
         "depth": float(depth),
     }
-    return _union(prisms), info
+    return _v_groove_rect(x0, y0, x1, y1, z_split, depth), info
+
+
+TAPE_LINE_DEPTH = 0.2  # shallow enough not to compromise the vacuum seal
+
+
+def tape_line_solid(block_min, block_max, part_bounds, z_face, params, warnings):
+    """Scribe line marking the inner edge of the sealant-tape zone.
+
+    Vacuum bagging off the flange needs a clean band of tape at the flange
+    edge; the scribe tells you where the tape zone starts so layup materials
+    stay inside it. A closed loop entirely inside the bag area — it can't
+    become a leak path.
+    """
+    tz = params.tape_zone_mm
+    x0 = float(block_min[0]) + tz
+    y0 = float(block_min[1]) + tz
+    x1 = float(block_max[0]) - tz
+    y1 = float(block_max[1]) - tz
+    (px0, py0, _), (px1, py1, _) = part_bounds
+    if x0 > px0 - RING_CLEARANCE or y0 > py0 - RING_CLEARANCE:
+        warnings.append(
+            f"flange too narrow for a {tz:g} mm tape zone scribe; skipped "
+            "(increase wall_margin_mm)"
+        )
+        return None, None
+    info = {
+        "rect": [x0, y0, x1, y1],
+        "zone_mm": float(tz),
+        "depth": TAPE_LINE_DEPTH,
+    }
+    return _v_groove_rect(x0, y0, x1, y1, z_face, TAPE_LINE_DEPTH), info
+
+
+# Easy Composites split-mould bush layout: 20-25 mm from the mould surface
+# edge, 75-100 mm apart (M6 bush system uses 6.1 mm holes)
+FLANGE_HOLE_EDGE_DISTANCE = 22.5
+FLANGE_HOLE_MAX_SPACING = 100.0
+
+
+def flange_hole_solids(block_min, block_max, wall_margin, params, warnings):
+    """Split-mould bush/dowel holes through the laminating-tool flange.
+
+    Count per edge comes from flange_hole_spacing_mm (EC: 75-100 mm);
+    positions sit FLANGE_HOLE_EDGE_DISTANCE in from the cavity edge. Used to
+    bolt a matching tool half, backing frame, or dowel a split mould.
+    """
+    r = params.flange_hole_diameter_mm / 2.0
+    inset = wall_margin - FLANGE_HOLE_EDGE_DISTANCE  # from the outer wall
+    lo, hi = RING_CLEARANCE + r, wall_margin - RING_CLEARANCE - r
+    if lo > hi:
+        warnings.append("flange too narrow for bush holes; skipped")
+        return None, None
+    clamped = min(max(inset, lo), hi)
+    if clamped != inset:
+        warnings.append(
+            f"bush holes moved to {wall_margin - clamped:.0f} mm from the cavity "
+            "edge to stay on the flange (EC recommend 20-25 mm)"
+        )
+    x0, y0, x1, y1 = _ring_rect(block_min, block_max, clamped)
+    edges = [
+        ((x0, y0), (x0, y1)),
+        ((x1, y0), (x1, y1)),
+        ((x0, y0), (x1, y0)),
+        ((x0, y1), (x1, y1)),
+    ]
+    positions = []
+    max_gap = 0.0
+    for a, b in edges:
+        length = math.hypot(b[0] - a[0], b[1] - a[1])
+        k = max(1, round(length / params.flange_hole_spacing_mm))
+        max_gap = max(max_gap, length / (k + 1))
+        for i in range(k):
+            t = (i + 1) / (k + 1)
+            positions.append((a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])))
+    if max_gap > FLANGE_HOLE_MAX_SPACING:
+        warnings.append(
+            f"largest bush-hole spacing is {max_gap:.0f} mm; Easy Composites "
+            "recommend 75-100 mm — reduce flange_hole_spacing_mm"
+        )
+
+    z0 = float(block_min[2]) - 1.0
+    height = float(block_max[2] - block_min[2]) + 2.0
+    holes = [
+        Manifold.cylinder(height, r, r, CIRCULAR_SEGMENTS).translate((x, y, z0))
+        for x, y in positions
+    ]
+    info = {
+        "centers": [[float(x), float(y)] for x, y in positions],
+        "radius": float(r),
+        "diameter": float(params.flange_hole_diameter_mm),
+    }
+    return _union(holes), info

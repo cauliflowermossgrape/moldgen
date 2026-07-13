@@ -18,9 +18,16 @@ machining.
   carbon mould design guidance](https://www.easycomposites.co.uk/learning/forged-carbon-mould-design-and-optimisation),
   with per-process clearance presets for resin-printed, FDM-printed and
   CNC-machined tools.
-- **Open layup** — a single-sided female tool. You pick which side of the
-  parting plane to keep; the flat parting face becomes a natural flange around
-  the cavity for vacuum bagging tape.
+- **Prepreg / laminating tool** — a single-sided female tool built to [Easy
+  Composites' composite mould CAD rules](https://www.easycomposites.co.uk/learning/CAD-techniques-for-composite-mould-design):
+  a 5–10 mm trim allowance past the part edge with a 5° kick (release aid +
+  witness line to trim to), ~30 mm bagging flange with a sealant-tape zone
+  scribe, optional split-mould bush holes (6.1 mm at 75–100 mm spacing), a
+  fabric-drape check for sharp corners, and cure/sealing notes for printed
+  tools.
+- **Open layup** — a basic single-sided female tool. You pick which side of
+  the parting plane to keep; the flat parting face becomes a natural flange
+  around the cavity for vacuum bagging tape.
 
 ## Architecture
 

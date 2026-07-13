@@ -15,13 +15,13 @@ from __future__ import annotations
 import numpy as np
 import trimesh
 
-from . import forged, hardware, mfld
+from . import forged, hardware, mfld, prepreg
 from .offset import offset_mesh
 from .types import MoldParams, MoldResult
-from .undercuts import analyze_undercuts
+from .undercuts import analyze_undercuts, sharp_edge_length_mm
 from .validate import validate_and_repair
 
-VALID_MODES = ("compression", "open_layup")
+VALID_MODES = ("compression", "open_layup", "prepreg")
 VALID_SIDES = ("above", "below")
 
 
@@ -102,6 +102,31 @@ def generate_mold(mesh: trimesh.Trimesh, params: MoldParams) -> MoldResult:
         }
         block_bounds = forged_meta.pop("block_bounds")
         extra_meta["forged"] = forged_meta
+    elif params.mode == "prepreg":
+        if params.bolts:
+            warnings.append(
+                "bolt holes apply only to compression molds; use "
+                "flange_bolt_holes on a prepreg tool"
+            )
+        if params.trim_groove:
+            warnings.append(
+                "prepreg tools get a witness line from the trim-allowance "
+                "kick; trim_groove ignored"
+            )
+        if params.demold_check:
+            sharp = sharp_edge_length_mm(part, z_split, params.keep_side)
+            if sharp > 1.0:
+                warnings.append(
+                    f"drape: {sharp:.0f} mm of edges sharper than 45° on the tool "
+                    "side — prepreg fabric will bridge tight corners; add 2-3 mm "
+                    "fillets to the part or fill corners with a resin fillet"
+                )
+        tool_man, prepreg_meta, hardware_meta = prepreg.build(
+            part_man, bounds, z_split, params, warnings
+        )
+        halves = {"tool": mfld.to_trimesh(tool_man)}
+        block_bounds = prepreg_meta.pop("block_bounds")
+        extra_meta["prepreg"] = prepreg_meta
     else:
         if params.bolts:
             warnings.append("bolt holes apply only to compression molds; ignored")
@@ -164,6 +189,11 @@ def _demold_warnings(
     else:
         side = report.bottom if params.keep_side == "below" else report.top
         sides = (("tool", side),)
+    mitigation = (
+        "rely on release agent, pry slots and jack screws"
+        if params.mode == "compression"
+        else "rely on release agent and wedges at the flange"
+    )
     for name, half in sides:
         if half.undercut_area_mm2 > 0:
             warnings.append(
@@ -175,8 +205,8 @@ def _demold_warnings(
             warnings.append(
                 f"demolding: {half.low_draft_area_mm2:.0f} mm² of walls in the "
                 f"{name} cavity have <{params.min_draft_deg:g}° draft; the part "
-                "will drag on release — common practice is 1-2° minimum draft, or "
-                "rely on release agent, pry slots and jack screws"
+                f"will drag on release — common practice is 1-2° minimum draft, or "
+                f"{mitigation}"
             )
 
 
@@ -186,8 +216,23 @@ def _check_params(p: MoldParams) -> list[str]:
         errors.append(f"mode must be one of {VALID_MODES}, got {p.mode!r}")
     if p.wall_margin_mm <= 0:
         errors.append(f"wall_margin_mm must be positive, got {p.wall_margin_mm:g}")
-    if p.mode == "open_layup" and p.keep_side not in VALID_SIDES:
+    if p.mode in ("open_layup", "prepreg") and p.keep_side not in VALID_SIDES:
         errors.append(f"keep_side must be one of {VALID_SIDES}, got {p.keep_side!r}")
+    if p.mode == "prepreg":
+        if p.trim_allowance_mm <= 0:
+            errors.append(f"trim_allowance_mm must be positive, got {p.trim_allowance_mm:g}")
+        if not 0 <= p.trim_kick_deg <= 15:
+            errors.append(f"trim_kick_deg must be 0-15, got {p.trim_kick_deg:g}")
+        if p.tape_line and p.tape_zone_mm <= 0:
+            errors.append("tape_zone_mm must be positive")
+        if p.flange_bolt_holes and (
+            p.flange_hole_diameter_mm <= 0
+            or not 20 <= p.flange_hole_spacing_mm <= 300
+        ):
+            errors.append(
+                "flange_hole_diameter_mm must be positive and "
+                "flange_hole_spacing_mm in 20-300"
+            )
     if p.mode == "compression":
         if p.plunge_mm <= 0:
             errors.append(f"plunge_mm must be positive, got {p.plunge_mm:g}")

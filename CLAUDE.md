@@ -59,7 +59,31 @@ Features (see `forged.py` + `hardware.py`):
 
 Halves are keyed/exported as **"female"** and **"male"**.
 
-### 2. Open layup
+### 2. Prepreg / laminating tool
+
+A single-sided female tool for prepreg or wet-lay vacuum work, mode
+"prepreg". Design rules follow Easy Composites' composite mould CAD guidance
+(easycomposites.co.uk/learning/CAD-techniques-for-composite-mould-design):
+
+- **Trim allowance** (5-10 mm for prepreg): the cavity opening continues
+  `trim_allowance_mm` past the part edge with a `trim_kick_deg` (default 5°)
+  outward kick — the laminate runs out past the finished edge, the kick aids
+  release AND leaves a witness line on the part to trim to. Built in
+  `prepreg.py` by slicing the part at the parting plane (Manifold.slice) and
+  extruding the cross-section with a scale approximating the kick.
+- **Flange**: ~30 mm is enough for a prepreg tool (frontend default); the
+  flange face sits at the top of the run-out (`flange_z`).
+- **Sealant-tape zone scribe**: shallow (0.2 mm) V-loop marking the inner
+  edge of the bagging-tape zone; closed loop inside the bag = no leak path.
+- **Flange bush holes** (opt-in): EC split-mould system — 6.1 mm holes,
+  20-25 mm from the mould surface edge, 75-100 mm spacing (auto count from
+  `flange_hole_spacing_mm`).
+- **Drape check**: warns on part edges sharper than 45° on the tool side
+  (fabric bridges tight mold corners; EC recommend generous fillets).
+- Metadata carries cure/sealing notes (low-temp initial cure for printed
+  tools, sealing porous surfaces, CTE mismatch).
+
+### 3. Open layup
 
 A single-sided **female** tool. The user picks which side of the parting plane
 to keep; the flat parting face becomes a natural **flange** around the cavity,
