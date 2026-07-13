@@ -48,6 +48,12 @@ class AnalyzeRequest(BaseModel):
     parting_z_mm: float
 
 
+class OrientRequest(BaseModel):
+    mesh_id: str
+    down: list[float] | None = None  # current-frame direction to point at −Z
+    reset: bool = False  # reload the as-uploaded orientation instead
+
+
 class GenerateRequest(BaseModel):
     mesh_id: str
     parting_z_mm: float
@@ -140,7 +146,10 @@ async def upload(
         raise HTTPException(status_code=400, detail=f"could not read {file.filename}: {exc}")
     export_stl(mesh, mesh_dir / "part.stl")
     mesh = trimesh.load(mesh_dir / "part.stl")  # canonical face order from here on
+    return {"filename": file.filename, **_part_stats(mesh_id, mesh)}
 
+
+def _part_stats(mesh_id: str, mesh: trimesh.Trimesh) -> dict:
     warnings = []
     if float(mesh.extents.max()) < 1.0:
         warnings.append(
@@ -152,7 +161,6 @@ async def upload(
 
     return {
         "mesh_id": mesh_id,
-        "filename": file.filename,
         "triangles": int(len(mesh.faces)),
         "bounds": mesh.bounds.tolist(),
         "extents": mesh.extents.tolist(),
@@ -161,6 +169,40 @@ async def upload(
         "warnings": warnings,
         "mesh_url": f"/api/download/{mesh_id}/part.stl",
     }
+
+
+@app.post("/api/orient")
+def orient(req: "OrientRequest") -> dict:
+    """Re-orient the canonical part: lay it on a face, or reset.
+
+    `down` is a direction in the part's current frame (e.g. a clicked face's
+    outward normal) that should point at −Z afterwards — the part ends up
+    lying on that face. The part is then rested with its bbox centered on
+    the origin and its lowest point at z=0. Rotation preserves triangle
+    order, so analyze face indices stay valid for the re-fetched mesh.
+    """
+    part_path = _part_path(req.mesh_id)
+    if req.reset:
+        original = next(part_path.parent.glob("original.*"), None)
+        if original is None:
+            raise HTTPException(status_code=404, detail="original upload not found")
+        mesh = load_part(original)
+    else:
+        if req.down is None or len(req.down) != 3:
+            raise HTTPException(status_code=400, detail="down must be a 3-vector")
+        down = np.asarray(req.down, dtype=float)
+        norm = np.linalg.norm(down)
+        if norm < 1e-9:
+            raise HTTPException(status_code=400, detail="down must be non-zero")
+        mesh = trimesh.load(part_path)
+        mesh.apply_transform(
+            trimesh.geometry.align_vectors(down / norm, [0.0, 0.0, -1.0])
+        )
+        center = mesh.bounds.mean(axis=0)
+        mesh.apply_translation([-center[0], -center[1], -mesh.bounds[0][2]])
+    export_stl(mesh, part_path)
+    mesh = trimesh.load(part_path)
+    return _part_stats(req.mesh_id, mesh)
 
 
 @app.post("/api/analyze")

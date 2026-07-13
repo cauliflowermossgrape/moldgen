@@ -210,6 +210,45 @@ function initPartingControls(stats) {
 
 // --- Upload ------------------------------------------------------------------
 
+async function loadPartFromServer(body) {
+  // cache-buster: /api/orient rewrites part.stl under the same URL
+  const geometry = await new STLLoader().loadAsync(`${body.mesh_url}?t=${Date.now()}`);
+  fillColors(geometry, NEUTRAL);
+
+  disposeMesh(state.partMesh);
+  disposeMesh(state.ghostMesh);
+  for (const m of Object.values(state.halfMeshes)) disposeMesh(m);
+  state.halfMeshes = {};
+
+  state.partMesh = new THREE.Mesh(geometry, partMaterial);
+  state.ghostMesh = new THREE.Mesh(geometry, ghostMaterial);
+  state.ghostMesh.visible = false;
+  scene.add(state.partMesh, state.ghostMesh);
+
+  state.meshId = body.mesh_id;
+  state.stats = body;
+
+  $('part-info').classList.remove('hidden');
+  $('orient-row').classList.remove('hidden');
+  if (body.filename) $('info-name').textContent = body.filename;
+  $('info-dims').textContent =
+    body.extents.map((e) => e.toFixed(1)).join(' × ') + ' mm';
+  $('info-tris').textContent = body.triangles.toLocaleString();
+  const wt = $('info-watertight');
+  wt.textContent = body.watertight ? 'yes' : 'no — will attempt repair';
+  wt.className = body.watertight ? 'good' : 'bad';
+  const warn = $('part-warnings');
+  warn.replaceChildren(
+    ...body.warnings.map((w) => Object.assign(document.createElement('li'), { textContent: w })));
+
+  initPartingControls(body);
+  resetAnalysis();
+  $('analyze').disabled = false;
+  $('generate').disabled = false;
+  showPartView();
+  fitCamera(body.bounds[0], body.bounds[1]);
+}
+
 async function uploadFile(file) {
   if (state.busy) return;
   state.busy = true;
@@ -226,40 +265,7 @@ async function uploadFile(file) {
     if (!res.ok) throw new Error(body.detail || `upload failed (${res.status})`);
 
     setStatus('loading preview…');
-    const geometry = await new STLLoader().loadAsync(body.mesh_url);
-    fillColors(geometry, NEUTRAL);
-
-    disposeMesh(state.partMesh);
-    disposeMesh(state.ghostMesh);
-    for (const m of Object.values(state.halfMeshes)) disposeMesh(m);
-    state.halfMeshes = {};
-
-    state.partMesh = new THREE.Mesh(geometry, partMaterial);
-    state.ghostMesh = new THREE.Mesh(geometry, ghostMaterial);
-    state.ghostMesh.visible = false;
-    scene.add(state.partMesh, state.ghostMesh);
-
-    state.meshId = body.mesh_id;
-    state.stats = body;
-
-    $('part-info').classList.remove('hidden');
-    $('info-name').textContent = body.filename;
-    $('info-dims').textContent =
-      body.extents.map((e) => e.toFixed(1)).join(' × ') + ' mm';
-    $('info-tris').textContent = body.triangles.toLocaleString();
-    const wt = $('info-watertight');
-    wt.textContent = body.watertight ? 'yes' : 'no — will attempt repair';
-    wt.className = body.watertight ? 'good' : 'bad';
-    const warn = $('part-warnings');
-    warn.replaceChildren(
-      ...body.warnings.map((w) => Object.assign(document.createElement('li'), { textContent: w })));
-
-    initPartingControls(body);
-    resetAnalysis();
-    $('analyze').disabled = false;
-    $('generate').disabled = false;
-    showPartView();
-    fitCamera(body.bounds[0], body.bounds[1]);
+    await loadPartFromServer(body);
     setStatus(`loaded ${body.filename} — parting plane at suggested height`);
   } catch (err) {
     setStatus(err.message, true);
@@ -268,6 +274,96 @@ async function uploadFile(file) {
     $('status').classList.remove('busy');
   }
 }
+
+// --- Lay on face ---------------------------------------------------------------
+
+const raycaster = new THREE.Raycaster();
+const pointerNdc = new THREE.Vector2();
+const layFlat = { active: false, normal: null };
+
+const hoverTri = new THREE.Mesh(
+  new THREE.BufferGeometry(),
+  new THREE.MeshBasicMaterial({
+    color: 0xef8540, transparent: true, opacity: 0.55,
+    side: THREE.DoubleSide, depthTest: false,
+  }),
+);
+hoverTri.geometry.setAttribute(
+  'position', new THREE.BufferAttribute(new Float32Array(9), 3));
+hoverTri.renderOrder = 10;
+hoverTri.visible = false;
+scene.add(hoverTri);
+
+function setLayFlat(active) {
+  layFlat.active = active;
+  layFlat.normal = null;
+  hoverTri.visible = false;
+  $('lay-flat').classList.toggle('active', active);
+  renderer.domElement.style.cursor = active ? 'crosshair' : '';
+  if (active) {
+    showPartView();
+    setStatus('click a face to lay the part on it — Esc to cancel');
+  }
+}
+
+async function orientPart(payload) {
+  if (!state.meshId || state.busy) return;
+  state.busy = true;
+  setStatus('re-orienting part…');
+  try {
+    const body = await postJSON('/api/orient', { mesh_id: state.meshId, ...payload });
+    await loadPartFromServer(body);
+    setStatus(payload.reset
+      ? 'orientation reset to as-uploaded'
+      : 'part laid on the selected face — parting plane re-suggested');
+  } catch (err) {
+    setStatus(err.message, true);
+  } finally {
+    state.busy = false;
+    $('status').classList.remove('busy');
+  }
+}
+
+renderer.domElement.addEventListener('pointermove', (e) => {
+  if (!layFlat.active || !state.partMesh) return;
+  const r = renderer.domElement.getBoundingClientRect();
+  pointerNdc.set(
+    ((e.clientX - r.left) / r.width) * 2 - 1,
+    -((e.clientY - r.top) / r.height) * 2 + 1,
+  );
+  raycaster.setFromCamera(pointerNdc, camera);
+  const hit = raycaster.intersectObject(state.partMesh)[0];
+  if (!hit) {
+    hoverTri.visible = false;
+    layFlat.normal = null;
+    return;
+  }
+  const pos = state.partMesh.geometry.attributes.position;
+  const tri = hoverTri.geometry.attributes.position;
+  [hit.face.a, hit.face.b, hit.face.c].forEach((vi, i) => {
+    tri.setXYZ(i, pos.getX(vi), pos.getY(vi), pos.getZ(vi));
+  });
+  tri.needsUpdate = true;
+  hoverTri.geometry.computeBoundingSphere();
+  hoverTri.visible = true;
+  layFlat.normal = hit.face.normal.clone();
+});
+
+let pointerDownAt = null;
+renderer.domElement.addEventListener('pointerdown', (e) => {
+  pointerDownAt = [e.clientX, e.clientY];
+});
+renderer.domElement.addEventListener('pointerup', (e) => {
+  if (!layFlat.active || !layFlat.normal || !pointerDownAt) return;
+  // a real click, not the end of an orbit drag
+  if (Math.hypot(e.clientX - pointerDownAt[0], e.clientY - pointerDownAt[1]) > 5) return;
+  const n = layFlat.normal;
+  setLayFlat(false);
+  orientPart({ down: [n.x, n.y, n.z] });
+});
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && layFlat.active) setLayFlat(false);
+});
 
 // --- Analyze -----------------------------------------------------------------
 
@@ -506,6 +602,8 @@ $('ghost').addEventListener('change', () => {
 $('explode').addEventListener('input', applyExplode);
 $('analyze').addEventListener('click', analyze);
 $('generate').addEventListener('click', generate);
+$('lay-flat').addEventListener('click', () => setLayFlat(!layFlat.active));
+$('reset-orient').addEventListener('click', () => orientPart({ reset: true }));
 
 fetch('/api/health')
   .then((r) => r.json())
