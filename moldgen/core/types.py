@@ -23,6 +23,14 @@ class MoldParams:
         "open_layup" — single-sided female tool: only the half on `keep_side`
         of the parting plane is returned; its flat parting face is the
         vacuum-bagging flange. Returned half is keyed "tool".
+        "prepreg" — laminating tool for prepreg/wet-lay vacuum work: like
+        open_layup, but the cavity opening continues `trim_allowance_mm`
+        past the part edge with a `trim_kick_deg` outward kick (Easy
+        Composites: 5-10 mm with a 5° kick — the laminate runs out past the
+        finished edge and the kick both aids release and leaves a witness
+        line to trim to), the flange face sits at the top of that run-out,
+        and the flange can carry a sealant-tape scribe line and split-mould
+        bush holes. Returned half is keyed "tool".
     parting_z_mm:
         Height of the flat parting plane, in the part's own coordinate frame.
     wall_margin_mm:
@@ -134,6 +142,18 @@ class MoldParams:
     trim_groove: bool = False
     trim_groove_offset_mm: float = 10.0
     trim_groove_depth_mm: float = 0.3
+    # prepreg / laminating tool — mode "prepreg". Values follow Easy
+    # Composites' composite mould CAD guidance: 5-10 mm trim allowance with
+    # a 5° kick (release + witness line), ~30 mm finished flange, split-mould
+    # bushes 20-25 mm from the mould surface edge at 75-100 mm spacing
+    # (6.1 mm holes for their M6 bush/dowel system).
+    trim_allowance_mm: float = 8.0
+    trim_kick_deg: float = 5.0
+    tape_line: bool = True
+    tape_zone_mm: float = 15.0
+    flange_bolt_holes: bool = False
+    flange_hole_diameter_mm: float = 6.1
+    flange_hole_spacing_mm: float = 90.0
 
 
 @dataclass

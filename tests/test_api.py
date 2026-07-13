@@ -102,6 +102,25 @@ def test_generate_open_layup(client):
     assert "trim_groove" in gen["metadata"]["hardware"]
 
 
+def test_generate_prepreg(client):
+    up = upload_mushroom(client)
+    gen = client.post(
+        "/api/generate",
+        json={
+            "mesh_id": up["mesh_id"],
+            "parting_z_mm": up["suggested_parting_z_mm"],
+            "mode": "prepreg",
+            "flange_bolt_holes": True,
+        },
+    ).json()
+    assert gen["ok"] is True, gen.get("errors")
+    assert set(gen["halves"]) == {"tool"}
+    assert gen["metadata"]["prepreg"]["trim_allowance_mm"] == 8.0
+    assert gen["metadata"]["prepreg"]["notes"]
+    assert "tape_line" in gen["metadata"]["hardware"]
+    assert "flange_holes" in gen["metadata"]["hardware"]
+
+
 def test_generate_engine_error_is_structured(client):
     up = upload_mushroom(client)
     gen = client.post(
