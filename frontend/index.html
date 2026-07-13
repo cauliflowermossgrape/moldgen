@@ -124,9 +124,14 @@
             <input type="checkbox" id="trim-groove" /> Trim groove on flange</label>
         </div>
         <label class="field"
-          title="Mold material around the part's bounding box. The flange band (margin − plug border − clearance) needs ~14 mm for pins and bolts; the generator warns or errors if it's too tight.">
+          title="Mold material around the part's bounding box, HORIZONTALLY. The flange band (margin − plug border − clearance) needs ~14 mm for pins and bolts; the generator warns or errors if it's too tight.">
           <span>Wall margin (mm)</span>
           <input type="number" id="wall-margin" value="22" min="8" step="1" />
+        </label>
+        <label class="field"
+          title="Vertical shell: material under the deepest cavity point and above it (male plate / tool floor). Kept separate from the wall margin so thin parts don't produce needlessly thick molds — ~10 mm is plenty for a printed tool.">
+          <span>Base thickness (mm)</span>
+          <input type="number" id="base-thickness" value="10" min="3" step="1" />
         </label>
         <label class="field"
           title="Uniformly inflates the cavity, e.g. 0.1–0.2 mm to compensate print shrinkage or leave release-agent allowance. Large values can self-intersect on fine detail.">

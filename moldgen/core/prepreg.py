@@ -57,12 +57,13 @@ def build(part_man, part_bounds, z_split, params, warnings):
     trim = float(params.trim_allowance_mm)
     flange_z = z_split + trim if below else z_split - trim
 
+    base = float(params.base_thickness_mm)
     if below:
-        block_min = np.array([px0 - m, py0 - m, pz0 - m])
+        block_min = np.array([px0 - m, py0 - m, min(pz0, z_split) - base])
         block_max = np.array([px1 + m, py1 + m, flange_z])
     else:
         block_min = np.array([px0 - m, py0 - m, flange_z])
-        block_max = np.array([px1 + m, py1 + m, pz1 + m])
+        block_max = np.array([px1 + m, py1 + m, max(pz1, z_split) + base])
 
     tool = mfld.box(block_min, block_max) - part_man
 

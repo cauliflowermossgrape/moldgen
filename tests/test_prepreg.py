@@ -53,7 +53,7 @@ def test_tool_volume_and_run_out():
     # kick 0: run-out removes exactly cross-section-area × trim
     cs_area = mfld.to_manifold(part).slice(0.0).area()
     dx = 30.0 + 2 * MARGIN
-    block = dx * dx * (15.0 + MARGIN + TRIM)
+    block = dx * dx * (15.0 + 10.0 + TRIM)  # part + base thickness + run-out
     expected = block - part.volume / 2 - cs_area * TRIM
     assert tool.volume == pytest.approx(expected, rel=1e-4)
 
@@ -120,7 +120,7 @@ def test_flange_bush_holes():
 
     from moldgen.core.hardware import CIRCULAR_SEGMENTS
     area = 0.5 * CIRCULAR_SEGMENTS * np.sin(2 * np.pi / CIRCULAR_SEGMENTS) * info["radius"] ** 2
-    height = (15.0 + MARGIN) + TRIM  # block bottom to flange face
+    height = (15.0 + 10.0) + TRIM  # block bottom (base thickness) to flange face
     removed = plain.halves["tool"].volume - tool.volume
     assert removed == pytest.approx(4 * area * height, rel=1e-3)
 

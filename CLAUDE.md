@@ -128,6 +128,14 @@ used for vacuum bagging tape (sealant tape sticks to the flat flange).
   the input mesh, so e.g. a z-symmetric icosphere leaves exactly half its
   volume below the parting plane.
 
+## Sizing gotcha
+
+`wall_margin_mm` is a HORIZONTAL requirement (the flange band must fit pins
+and bolts, ~14 mm minimum plus plug border). Vertical shell thickness is the
+separate `base_thickness_mm` (default 10): material under the deepest cavity
+point and above it (male plate / tool floor). Never reuse the wall margin
+vertically — that's how thin parts ended up with 40 mm-thick molds.
+
 ## Dev workflow
 
 - `make dev` — create venv if needed, install deps, run uvicorn with reload on

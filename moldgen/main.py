@@ -53,6 +53,7 @@ class GenerateRequest(BaseModel):
     parting_z_mm: float
     mode: str = "compression"
     wall_margin_mm: float = 22.0
+    base_thickness_mm: float = 10.0
     cavity_offset_mm: float = 0.0
     keep_side: str = "below"
     plunge_mm: float = 10.0

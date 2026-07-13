@@ -54,8 +54,8 @@ def generate_mold(mesh: trimesh.Trimesh, params: MoldParams) -> MoldResult:
 
     bounds = part.bounds
     z = float(params.parting_z_mm)
-    block_lo = bounds[0][2] - params.wall_margin_mm
-    block_hi = bounds[1][2] + params.wall_margin_mm
+    block_lo = bounds[0][2] - params.base_thickness_mm
+    block_hi = bounds[1][2] + params.base_thickness_mm
     if not (block_lo < z < block_hi):
         return MoldResult(
             ok=False,
@@ -130,8 +130,14 @@ def generate_mold(mesh: trimesh.Trimesh, params: MoldParams) -> MoldResult:
     else:
         if params.bolts:
             warnings.append("bolt holes apply only to compression molds; ignored")
-        block_min = bounds[0] - params.wall_margin_mm
-        block_max = bounds[1] + params.wall_margin_mm
+        block_min = np.append(
+            bounds[0][:2] - params.wall_margin_mm,
+            bounds[0][2] - params.base_thickness_mm,
+        )
+        block_max = np.append(
+            bounds[1][:2] + params.wall_margin_mm,
+            bounds[1][2] + params.base_thickness_mm,
+        )
         mold = mfld.box(block_min, block_max) - part_man
 
         half_a, half_b = mold.split_by_plane((0.0, 0.0, 1.0), z_split)
@@ -216,6 +222,10 @@ def _check_params(p: MoldParams) -> list[str]:
         errors.append(f"mode must be one of {VALID_MODES}, got {p.mode!r}")
     if p.wall_margin_mm <= 0:
         errors.append(f"wall_margin_mm must be positive, got {p.wall_margin_mm:g}")
+    if p.base_thickness_mm < 3:
+        errors.append(
+            f"base_thickness_mm must be at least 3, got {p.base_thickness_mm:g}"
+        )
     if p.mode in ("open_layup", "prepreg") and p.keep_side not in VALID_SIDES:
         errors.append(f"keep_side must be one of {VALID_SIDES}, got {p.keep_side!r}")
     if p.mode == "prepreg":

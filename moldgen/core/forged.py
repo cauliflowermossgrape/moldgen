@@ -73,8 +73,9 @@ def build(part_man, part_bounds, z_split, params, warnings, part_centroid_xy=Non
             f"least {math.ceil(border + clear + g_flange + MIN_BAND_MM):g}"
         )
 
-    block_min = np.array([px0 - m, py0 - m, pz0 - m])
-    block_max = np.array([px1 + m, py1 + m, max(pz1, z_flange) + m])
+    base = float(params.base_thickness_mm)
+    block_min = np.array([px0 - m, py0 - m, min(pz0, z_split) - base])
+    block_max = np.array([px1 + m, py1 + m, max(pz1, z_flange) + base])
 
     cx, cy = (px0 + px1) / 2.0, (py0 + py1) / 2.0
     plug_w = (px1 - px0) + 2.0 * border
