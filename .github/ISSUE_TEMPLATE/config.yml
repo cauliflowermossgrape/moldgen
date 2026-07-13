@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Setup help
+    url: https://github.com/cauliflowermossgrape/moldgen#troubleshooting
+    about: The README's troubleshooting table covers the common install and startup problems.

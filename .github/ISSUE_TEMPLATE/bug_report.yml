@@ -1,0 +1,81 @@
+name: Bug report
+description: Something broke, or a generated mold is wrong
+labels: [bug]
+body:
+  - type: dropdown
+    id: area
+    attributes:
+      label: Where is the problem?
+      options:
+        - Generated mold geometry is wrong
+        - Upload / file import
+        - Undercut / demolding analysis
+        - Web UI / viewer
+        - Install / startup
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Mold style (if geometry-related)
+      options:
+        - Compression / forged carbon
+        - Prepreg / laminating tool
+        - Open layup
+        - Not applicable
+    validations:
+      required: false
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened, and what did you expect?
+      description: >
+        For wrong geometry: which half, and what's wrong with it (too thick,
+        not watertight, hardware missing/misplaced, halves don't fit...).
+      placeholder: e.g. the male plug is wider than the female pocket when draft is 0
+    validations:
+      required: true
+
+  - type: textarea
+    id: settings
+    attributes:
+      label: Settings used
+      description: >
+        The non-default settings from the sidebar (parting height, margins,
+        clearances, hardware toggles). Screenshots of the sidebar are fine.
+    validations:
+      required: false
+
+  - type: textarea
+    id: part
+    attributes:
+      label: The part
+      description: >
+        Attach the model file if you can (zip it first — GitHub doesn't take
+        raw STL). If you can't share it, give its rough dimensions, triangle
+        count, and whether the upload reported it watertight. Bugs with an
+        attached part get fixed much faster.
+    validations:
+      required: false
+
+  - type: textarea
+    id: warnings
+    attributes:
+      label: Warnings and errors
+      description: >
+        Everything shown in the app's warning list / status bar, plus any
+        traceback from the terminal running uvicorn.
+      render: text
+    validations:
+      required: false
+
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      placeholder: "e.g. Windows 11, Python 3.12, Chrome — step extra installed: no"
+    validations:
+      required: true
