@@ -7,6 +7,8 @@
 <p align="center">
   Turn any 3D model into a ready-to-print (or CNC) mold for carbon fiber work.<br/>
   Runs locally in your browser — upload a part, drag the parting plane, download the mold halves.
+  <img width="1889" height="897" alt="image" src="https://github.com/user-attachments/assets/4f718428-f024-4545-b020-e4fd2ca36f3c" />
+
 </p>
 
 ---
@@ -120,7 +122,6 @@ tests/             pytest — geometry verified by exact volume arithmetic
 All booleans run through [manifold3d](https://github.com/elalish/manifold) (watertight-guaranteed); trimesh handles I/O and analysis. The frontend talks to a small JSON API (`POST /api/upload`, `/api/analyze`, `/api/generate`, `GET /api/download/{id}/{half}.stl`) — script it directly if you prefer. Units are millimeters everywhere.
 
 Known limitations: the undercut check is first-order (won't catch silhouette-occluded undercuts like tilted bores), the parting surface is a flat plane, and fillets can't be added to your part automatically — the drape check tells you where they're needed.
-<img width="1889" height="897" alt="image" src="https://github.com/user-attachments/assets/4f718428-f024-4545-b020-e4fd2ca36f3c" />
 
 ## License
 
