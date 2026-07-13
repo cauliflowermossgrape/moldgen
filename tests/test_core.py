@@ -20,6 +20,7 @@ from moldgen.core import MoldParams, generate_mold, export_stl
 from moldgen.core import mfld
 
 MARGIN = 15.0
+BASE = 10.0  # default base_thickness_mm
 PLUNGE = 10.0
 BORDER = 8.0
 CLEARANCE = 0.15
@@ -48,8 +49,8 @@ def forged_expected(part, res, part_below, part_above):
     a_pocket = (x1 - x0 + 2 * (BORDER + CLEARANCE)) * (
         y1 - y0 + 2 * (BORDER + CLEARANCE)
     )
-    top = max(z1, zf) + MARGIN
-    bottom = z0 - MARGIN
+    top = max(z1, zf) + BASE
+    bottom = z0 - BASE
     female = a_blk * (zf - bottom) - a_pocket * PLUNGE - part_below
     male = a_plug * (top - z_split) + (a_blk - a_plug) * (top - zf) - part_above
     return female, male
@@ -135,9 +136,10 @@ def test_open_layup_keep_below():
     assert set(res.halves) == {"tool"}
     tool = res.halves["tool"]
     assert tool.is_watertight
-    lo = sphere.bounds[0] - MARGIN
-    hi = sphere.bounds[1] + MARGIN
-    expected = (hi[0] - lo[0]) * (hi[1] - lo[1]) * (0.0 - lo[2]) - sphere.volume / 2
+    dx = sphere.extents[0] + 2 * MARGIN
+    dy = sphere.extents[1] + 2 * MARGIN
+    floor = sphere.bounds[0][2] - BASE
+    expected = dx * dy * (0.0 - floor) - sphere.volume / 2
     assert tool.volume == pytest.approx(expected, rel=REL_TOL)
     # the tool sits entirely below the parting plane (plus float32 slack)
     assert tool.bounds[1][2] == pytest.approx(0.0, abs=1e-3)

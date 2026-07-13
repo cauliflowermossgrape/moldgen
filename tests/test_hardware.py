@@ -169,8 +169,8 @@ def test_bolt_holes_volume_and_count():
     assert r == pytest.approx(3.25)  # M6/2 + 0.25 sliding clearance
 
     area = 0.5 * CIRCULAR_SEGMENTS * np.sin(2 * np.pi / CIRCULAR_SEGMENTS) * r**2
-    bottom_z = part.bounds[0][2] - 22.0  # default wall margin
-    top_z = max(part.bounds[1][2], Z_FLANGE) + 22.0
+    bottom_z = part.bounds[0][2] - 10.0  # default base thickness
+    top_z = max(part.bounds[1][2], Z_FLANGE) + 10.0
     d_female = plain.halves["female"].volume - bolted.halves["female"].volume
     d_male = plain.halves["male"].volume - bolted.halves["male"].volume
     assert d_female == pytest.approx(4 * area * (Z_FLANGE - bottom_z), rel=1e-3)
@@ -259,7 +259,7 @@ def test_jack_screws_cut_male_plate_only():
 
     # holes pierce only the male plate (top_z − z_flange thick)
     area = 0.5 * CIRCULAR_SEGMENTS * np.sin(2 * np.pi / CIRCULAR_SEGMENTS) * info["radius"] ** 2
-    top_z = max(part.bounds[1][2], Z_FLANGE) + 22.0
+    top_z = max(part.bounds[1][2], Z_FLANGE) + 10.0
     d_male = plain.halves["male"].volume - jacked.halves["male"].volume
     d_female = plain.halves["female"].volume - jacked.halves["female"].volume
     assert d_male == pytest.approx(2 * area * (top_z - Z_FLANGE), rel=1e-3)
@@ -283,12 +283,12 @@ def test_ejector_hole_pierces_female_base():
     assert info["center"] == pytest.approx([0.0, 0.0], abs=1e-6)
     assert any("wax or tape" in w for w in ejected.warnings)
 
-    # hole runs from the block bottom (−5−22) to the cavity floor (−5)
+    # hole runs from the block bottom (−5−10) to the cavity floor (−5)
     area = 0.5 * CIRCULAR_SEGMENTS * np.sin(2 * np.pi / CIRCULAR_SEGMENTS) * info["radius"] ** 2
     removed = plain.halves["female"].volume - female.volume
-    assert removed == pytest.approx(area * 22.0, rel=1e-3)
+    assert removed == pytest.approx(area * 10.0, rel=1e-3)
     # and the female now opens at its underside
-    assert female.bounds[0][2] == pytest.approx(-27.0, abs=1e-3)
+    assert female.bounds[0][2] == pytest.approx(-15.0, abs=1e-3)
 
 
 def test_demold_warnings():

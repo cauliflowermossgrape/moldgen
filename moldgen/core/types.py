@@ -99,6 +99,12 @@ class MoldParams:
     mode: str
     parting_z_mm: float
     wall_margin_mm: float = 22.0
+    # vertical shell: material under the deepest cavity point (female /
+    # single-sided tool floor) and above the cavity (male plate). Separate
+    # from wall_margin_mm, which is a HORIZONTAL requirement (the flange
+    # band must fit pins/bolts) — using it vertically makes thin parts
+    # produce needlessly thick molds.
+    base_thickness_mm: float = 10.0
     cavity_offset_mm: float = 0.0
     keep_side: str = "below"
     # telescoping plug/pocket — compression mode only. Defaults follow Easy

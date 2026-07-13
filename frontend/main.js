@@ -331,6 +331,7 @@ function currentParams() {
     mode: document.querySelector('input[name="mold-style"]:checked').value,
     parting_z_mm: parseFloat($('parting-z').value),
     wall_margin_mm: parseFloat($('wall-margin').value),
+    base_thickness_mm: parseFloat($('base-thickness').value),
     cavity_offset_mm: parseFloat($('cavity-offset').value),
     keep_side: $('keep-side').value,
     plunge_mm: parseFloat($('plunge').value),
