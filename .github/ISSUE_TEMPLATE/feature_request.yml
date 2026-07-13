@@ -1,0 +1,33 @@
+name: Feature request
+description: Suggest a mold feature, setting, or workflow improvement
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to make, and what's in the way?
+      description: >
+        Describe the real-world molding situation first — the part, the
+        process (forged / prepreg / layup), and what the generator currently
+        can't do for it.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What should moldgen do?
+      description: >
+        If you've seen the feature in real tooling (Easy Composites videos,
+        commercial molds, your own workshop practice), link or describe it —
+        this project follows documented mold-making practice, so references
+        help a lot.
+    validations:
+      required: true
+
+  - type: textarea
+    id: workaround
+    attributes:
+      label: Current workaround (if any)
+    validations:
+      required: false
