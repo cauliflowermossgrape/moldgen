@@ -5,7 +5,20 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "moldgen"
 version = "0.1.0"
-description = "Two-part mold generator for carbon fiber work: upload a part (STL/3MF), get a printable/machinable mold"
+description = "Generate 3D-printable / CNC molds for carbon fiber work: forged carbon compression moulds, prepreg laminating tools and open-layup tools from STL/3MF/OBJ/STEP parts"
+keywords = [
+    "carbon-fiber", "carbon-fibre", "forged-carbon", "mold", "mould",
+    "compression-molding", "prepreg", "vacuum-bagging", "composites",
+    "3d-printing", "cnc", "mold-making",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Manufacturing",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Multimedia :: Graphics :: 3D Modeling",
+    "Topic :: Scientific/Engineering",
+]
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.111",

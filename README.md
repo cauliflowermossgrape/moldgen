@@ -23,6 +23,8 @@
 
 Upload a part (STL / 3MF / OBJ), pick a mold style, and moldgen generates watertight, printable mold geometry — with the mold-making details already engineered in, following [Easy Composites' published guidance](https://www.easycomposites.co.uk/learning/forged-carbon-mould-design-and-optimisation). Every setting in the app has a hover tooltip explaining what it does and where the default number comes from.
 
+Whichever way you spell it — carbon fiber or carbon fibre, mold or mould — this covers the three tool types home and small-shop composite work actually uses: forged carbon compression moulds, prepreg/vacuum-bagging laminating tools, and open layup tools.
+
 | Mold style | What you get |
 |---|---|
 | **Compression / forged carbon** | Two-part telescoping mold — the male plug pistons into the female pocket so chopped fiber can't jam the seam. Registration pins, clamp bolt holes, pry slots, jack screws, resin overflow channels, optional ejector hole. |
