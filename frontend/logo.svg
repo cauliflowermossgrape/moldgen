@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- moldgen: male plug telescoping into the female pocket -->
+  <rect width="64" height="64" rx="14" fill="#14161a"/>
+  <!-- male half: plate + plug -->
+  <path d="M10 10 h44 v12 h-13 v16 h-18 v-16 h-13 z" fill="#e8955a"/>
+  <!-- female half: block with pocket -->
+  <path d="M10 32 h8 v10 h28 v-10 h8 v22 h-44 z" fill="#6fa8e8"/>
+</svg>

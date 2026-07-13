@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>moldgen</title>
+  <link rel="icon" type="image/svg+xml" href="logo.svg" />
   <link rel="stylesheet" href="style.css" />
   <script type="importmap">
     {
@@ -18,10 +19,19 @@
   <main id="app">
     <div id="viewport">
       <div id="drop-hint" class="hidden">Drop STL · 3MF · OBJ</div>
+      <div id="legend" class="hidden">
+        <span class="chip"><i class="sw sw-undercut"></i>undercut — locks</span>
+        <span class="chip"><i class="sw sw-drag"></i>low draft — drags</span>
+      </div>
     </div>
     <aside id="sidebar">
-      <h1>moldgen</h1>
-      <p class="tagline">Compression &amp; layup molds for carbon fiber</p>
+      <header id="brand">
+        <img src="logo.svg" alt="" width="40" height="40" />
+        <div>
+          <h1>moldgen</h1>
+          <p class="tagline">Molds for carbon fiber work</p>
+        </div>
+      </header>
 
       <section class="panel">
         <h2>Process</h2>
@@ -253,7 +263,7 @@
         </div>
       </section>
 
-      <footer id="status">ready</footer>
+      <footer id="status"><i id="status-dot"></i><span id="status-text">ready</span></footer>
     </aside>
   </main>
   <script type="module" src="main.js"></script>

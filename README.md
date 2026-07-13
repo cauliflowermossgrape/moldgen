@@ -1,72 +1,105 @@
-# moldgen
+<p align="center">
+  <img src="frontend/logo.svg" width="88" alt="moldgen logo" />
+</p>
 
-A local web app that takes a 3D model of a part (STL or 3MF) and generates a
-two-part mold for carbon fiber work, exportable as STL for 3D printing or CNC
-machining.
+<h1 align="center">moldgen</h1>
+
+<p align="center">
+  Turn any 3D model into a ready-to-print (or CNC) mold for carbon fiber work.<br/>
+  Forged-carbon compression molds, prepreg laminating tools, and open-layup tools —<br/>
+  with the mold-making details already engineered in.
+</p>
+
+---
+
+**moldgen** is a local web app: upload a part (STL / 3MF / OBJ — STEP / IGES with an extra), drag a parting plane through it in a 3D viewport, check demoldability, and export watertight mold halves as binary STL. All boolean geometry runs through [manifold3d](https://github.com/elalish/manifold), so the output is guaranteed watertight — sliceable and machinable as-is.
+
+Design rules and default dimensions follow Easy Composites' published mold-making guidance ([forged carbon mould design](https://www.easycomposites.co.uk/learning/forged-carbon-mould-design-and-optimisation), [composite mould CAD techniques](https://www.easycomposites.co.uk/learning/CAD-techniques-for-composite-mould-design)); every setting has a tooltip explaining what it does and where the number comes from.
 
 ## Mold styles
 
-- **Compression / forged carbon** — a two-part **telescoping** mold: the male
-  half's plug pistons into the female half's pocket walls, so chopped fiber
-  can't jam a flat seam and excess resin escapes up the pinch-off gap while
-  fiber is retained. Includes registration pins, clamping bolt holes, pry
-  (wedge) slots and jack screws for opening the cured mold, an optional
-  ejector-pin hole, resin overflow channels, wall draft and a lead-in
-  chamfer. Generation runs a demolding check: undercuts (part locks) and
-  low-draft walls (part drags; <1–2° from vertical) are reported per half
-  and highlighted red/amber in the analyzer. Defaults follow [Easy Composites' forged
-  carbon mould design guidance](https://www.easycomposites.co.uk/learning/forged-carbon-mould-design-and-optimisation),
-  with per-process clearance presets for resin-printed, FDM-printed and
-  CNC-machined tools.
-- **Prepreg / laminating tool** — a single-sided female tool built to [Easy
-  Composites' composite mould CAD rules](https://www.easycomposites.co.uk/learning/CAD-techniques-for-composite-mould-design):
-  a 5–10 mm trim allowance past the part edge with a 5° kick (release aid +
-  witness line to trim to), ~30 mm bagging flange with a sealant-tape zone
-  scribe, optional split-mould bush holes (6.1 mm at 75–100 mm spacing), a
-  fabric-drape check for sharp corners, and cure/sealing notes for printed
-  tools.
-- **Open layup** — a basic single-sided female tool. You pick which side of
-  the parting plane to keep; the flat parting face becomes a natural flange
-  around the cavity for vacuum bagging tape.
+| Style | What you get |
+|---|---|
+| **Compression / forged carbon** | Telescoping two-part mold: the male plug pistons into the female pocket so chopped fiber can't jam a flat seam, and the pinch-off wall gap doubles as the resin escape path. Registration pins, clamping bolt holes, pry slots, jack screws, resin overflow channels, optional ejector-pin hole, wall draft, lead-in chamfer. |
+| **Prepreg / laminating tool** | Single-sided female tool: trim-allowance run-out past the part edge with a 5° kick (release aid + witness line to trim to), ~30 mm bagging flange, sealant-tape zone scribe, optional split-mould bush holes (6.1 mm @ 75–100 mm spacing), fabric-drape check for sharp corners. |
+| **Open layup** | Basic single-sided female tool with a flat bagging flange and optional trim groove. |
 
-## Architecture
+Every generation runs a **demolding check**: undercut faces (part locks — red) and low-draft walls (part drags — amber) are reported per half and highlighted on the model, and the parting height is auto-suggested to minimize undercuts. Printer-process presets (resin / FDM / CNC) set all fit clearances in one click.
 
-| Layer    | Tech                                                                 |
-|----------|----------------------------------------------------------------------|
-| Backend  | Python 3.11+, FastAPI + uvicorn                                      |
-| Geometry | trimesh + manifold3d (all booleans via manifold — watertight-safe)   |
-| Frontend | Vanilla JS + three.js (CDN import map, no build step)                |
-| Storage  | `./workdir/` folder for uploads and generated molds — no database    |
+## Quick start
 
-The FastAPI app serves both the JSON API (under `/api`) and the static
-frontend, so `make dev` starts everything on a single port.
-
-## Getting started
+Requires **Python 3.11+**. No Node, no database, no build step.
 
 ```sh
-make dev      # sets up .venv, installs deps, runs http://localhost:8000
-make test     # runs pytest
+git clone <this-repo> && cd moldgen
+
+python3 -m venv .venv
+.venv/bin/pip install -e ".[dev]"
+.venv/bin/python -m uvicorn moldgen.main:app --reload
 ```
 
-### Optional: STEP / IGES input
+Open **http://localhost:8000** and drop a model in. (With `make` installed, `make dev` does all of the above and `make test` runs the suite.)
 
-Mesh formats (STL/3MF/OBJ) work out of the box. To upload STEP or IGES
-directly, install the `step` extra — it pulls cadquery/OpenCascade, whose
-wheels are several hundred MB, so it's opt-in:
+> The frontend loads three.js from a CDN via an import map, so the first page load needs internet access.
+
+### Optional: STEP / IGES input
 
 ```sh
 .venv/bin/pip install "moldgen[step]"
 ```
 
-BRep surfaces are tessellated on upload with configurable deflections
-(defaults: 0.05 mm linear sagitta, 0.3° angular). The UI detects support at
-runtime and enables the formats + tessellation settings automatically.
+Pulls cadquery/OpenCascade (wheels are several hundred MB, hence opt-in). BRep surfaces are tessellated on upload with configurable linear/angular deflection (0.05 mm / 0.3° defaults); IGES surfaces are sewn into a closed shell automatically. The UI detects support at runtime and enables the formats when present. On a minimal Linux install you may need `libgl1` (`sudo apt install libgl1`).
 
-## Layout
+## Workflow
+
+1. **Upload** — drag a model into the viewport. You get triangle count, dimensions, a watertightness check (with automatic repair attempt), and a units sanity warning if the model looks like it was exported in meters.
+2. **Part** — move the parting-plane slider (initialized to the suggested height) and hit *Analyze undercuts*: red faces lock, amber faces drag.
+3. **Configure** — pick the mold style and printing process; every dimension is editable and explained on hover.
+4. **Generate** — both halves render in the viewport with an explode slider and a ghost-part toggle. Warnings tell you about anything that was shrunk, moved, or skipped to fit — and anything about your part that will fight demolding.
+5. **Download** — per-half binary STLs, ready to slice.
+
+## API
+
+The frontend is plain JS over a small JSON API — script it directly if you prefer:
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /api/upload` | multipart file → mesh id, stats, suggested parting height |
+| `POST /api/analyze` | `{mesh_id, parting_z_mm}` → undercut + low-draft faces & per-half verdicts |
+| `POST /api/generate` | `{mesh_id, parting_z_mm, mode, ...params}` → metadata + download URLs |
+| `GET /api/download/{id}/{half}.stl` | binary STL (`female`, `male`, `tool`, or `part`) |
+
+Engine failures return `{"ok": false, "errors": [...]}` with HTTP 200 — errors are data, not exceptions. Uploaded parts and generated molds live in `./workdir/` (no database).
+
+## Architecture
 
 ```
-moldgen/         Python package (FastAPI app, geometry code)
-frontend/        index.html + main.js + style.css (three.js viewport & sidebar)
-tests/           pytest suite
-workdir/         uploads & generated molds (gitignored)
+moldgen/
+  core/            pure-geometry engine (no web imports, fully unit-tested)
+    engine.py        generate_mold(mesh, params) -> MoldResult
+    forged.py        telescoping compression construction
+    prepreg.py       laminating-tool construction
+    hardware.py      pins, bolts, pry slots, jack screws, overflow, scribes
+    undercuts.py     demold + drape analysis, parting-plane suggestion
+    validate.py      watertightness checks + repair
+    step_io.py       optional STEP/IGES tessellation (cadquery/OCP)
+  main.py          FastAPI app: JSON API + static frontend
+frontend/          vanilla JS + three.js viewport (CDN import map)
+tests/             pytest suite — geometry verified by exact volume arithmetic
 ```
+
+Trimesh handles I/O and analysis; **all** booleans and splits go through manifold3d. Units are millimeters throughout.
+
+## Development
+
+```sh
+.venv/bin/python -m pytest        # 48 tests, a few seconds
+```
+
+Tests generate primitives programmatically (no fixture files) and verify molds by exact arithmetic — e.g. a z-symmetric icosphere leaves exactly half its volume below the parting plane, and peg/hole radii are measured off the output meshes to confirm they differ by exactly the requested clearance.
+
+## Limitations worth knowing
+
+- The undercut check is first-order (per-face normals): it won't catch silhouette-occluded undercuts like tilted bores. A full check needs ray-cast visibility testing.
+- The parting surface is a flat plane; stepped/curved parting surfaces aren't supported (yet).
+- Cavity fillets can't be added to your part automatically — the drape check tells you where they're needed.

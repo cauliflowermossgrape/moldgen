@@ -4,7 +4,6 @@ import { STLLoader } from 'three/addons/loaders/STLLoader.js';
 
 const $ = (id) => document.getElementById(id);
 const viewport = $('viewport');
-const statusEl = $('status');
 
 const state = {
   meshId: null,
@@ -107,8 +106,9 @@ const LOW_DRAFT = [0.98, 0.72, 0.25];
 // --- Helpers -----------------------------------------------------------------
 
 function setStatus(text, isError = false) {
-  statusEl.textContent = text;
-  statusEl.classList.toggle('error', isError);
+  $('status-text').textContent = text;
+  $('status').classList.toggle('error', isError);
+  $('status').classList.toggle('busy', state.busy && !isError);
 }
 
 async function postJSON(url, payload) {
@@ -155,6 +155,7 @@ function resetAnalysis() {
     colors.needsUpdate = true;
   }
   $('verdicts').classList.add('hidden');
+  $('legend').classList.add('hidden');
 }
 
 // --- View state --------------------------------------------------------------
@@ -168,6 +169,7 @@ function showPartView() {
 }
 
 function showMoldView() {
+  $('legend').classList.add('hidden');
   if (state.partMesh) state.partMesh.visible = false;
   if (state.planeMesh) state.planeMesh.visible = false;
   if (state.ghostMesh) state.ghostMesh.visible = $('ghost').checked;
@@ -263,6 +265,7 @@ async function uploadFile(file) {
     setStatus(err.message, true);
   } finally {
     state.busy = false;
+    $('status').classList.remove('busy');
   }
 }
 
@@ -305,6 +308,8 @@ async function analyze() {
       }
     }
     $('verdicts').classList.remove('hidden');
+    $('legend').classList.toggle(
+      'hidden', body.undercut_faces.length + body.low_draft_faces.length === 0);
     showPartView();
     const n = body.undercut_faces.length + body.low_draft_faces.length;
     setStatus(n
@@ -314,6 +319,7 @@ async function analyze() {
     setStatus(err.message, true);
   } finally {
     state.busy = false;
+    $('status').classList.remove('busy');
   }
 }
 
@@ -385,7 +391,15 @@ async function generate() {
       a.className = 'dl';
       a.href = info.url;
       a.download = `moldgen-${name}.stl`;
-      a.textContent = `Download ${name}.stl — ${(info.volume / 1000).toFixed(0)} cm³`;
+      const swatch = document.createElement('i');
+      swatch.className = 'sw';
+      swatch.style.background =
+        '#' + (halfMaterials[name] || halfMaterials.tool).color.getHexString();
+      a.append(
+        swatch,
+        `${name}.stl — ${(info.volume / 1000).toFixed(0)} cm³`,
+        Object.assign(document.createElement('span'), { className: 'dl-arrow', textContent: '↓' }),
+      );
       downloads.append(a);
     }
 
@@ -404,6 +418,7 @@ async function generate() {
     setStatus(err.message, true);
   } finally {
     state.busy = false;
+    $('status').classList.remove('busy');
     btn.disabled = false;
     btn.textContent = 'Generate mold';
   }
