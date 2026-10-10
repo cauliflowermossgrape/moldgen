@@ -68,6 +68,9 @@ def run_app(open_browser: bool = True) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    from moldgen.cli import _tolerant_stdio
+
+    _tolerant_stdio()  # the banner prints the user's data path
     argv = sys.argv[1:] if argv is None else argv
     if argv:
         from moldgen.cli import main as cli_main

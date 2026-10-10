@@ -39,6 +39,20 @@ jobs:
           moldgen generate sphere.stl --out out --ejector-holes
           moldgen analyze sphere.stl
 
+  windows:
+    # Windows defaults differ (cp1252 text encoding, path rules): run the
+    # suite there on every PR, not only when a release build hits it
+    name: Windows (Python 3.12)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -e ".[dev]"
+      - run: python -m pytest -q
+
   frontend:
     name: Frontend syntax
     runs-on: ubuntu-latest
