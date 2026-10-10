@@ -20,9 +20,7 @@ def upload_mushroom(client):
     cap.apply_translation([0, 0, 22.5])
     part = trimesh.boolean.union([stem, cap], engine="manifold")
     data = trimesh.exchange.stl.export_stl(part)
-    resp = client.post(
-        "/api/upload", files={"file": ("mushroom.stl", data, "model/stl")}
-    )
+    resp = client.post("/api/upload", files={"file": ("mushroom.stl", data, "model/stl")})
     assert resp.status_code == 200, resp.text
     return resp.json()
 
@@ -41,9 +39,7 @@ def test_full_flow(client):
     assert len(mesh_resp.content) == 84 + 50 * up["triangles"]
 
     # analyze at a bad height: cap underside blocks the top half
-    an = client.post(
-        "/api/analyze", json={"mesh_id": up["mesh_id"], "parting_z_mm": 10.0}
-    ).json()
+    an = client.post("/api/analyze", json={"mesh_id": up["mesh_id"], "parting_z_mm": 10.0}).json()
     assert an["undercut_faces"]
     assert max(an["undercut_faces"]) < up["triangles"]
     assert not an["top"]["likely_demoldable"]
@@ -106,9 +102,7 @@ def test_orient_lay_on_face_and_reset(client):
     up = upload_mushroom(client)  # extents 30 x 30 x 25, stem up
 
     # lay the part on its +X side: height becomes the old x extent
-    resp = client.post(
-        "/api/orient", json={"mesh_id": up["mesh_id"], "down": [1, 0, 0]}
-    )
+    resp = client.post("/api/orient", json={"mesh_id": up["mesh_id"], "down": [1, 0, 0]})
     assert resp.status_code == 200
     o = resp.json()
     assert o["triangles"] == up["triangles"]  # rotation preserves face order
@@ -173,9 +167,7 @@ def test_bad_requests(client):
     resp = client.post("/api/analyze", json={"mesh_id": "nope", "parting_z_mm": 0})
     assert resp.status_code == 400  # malformed id
 
-    resp = client.post(
-        "/api/analyze", json={"mesh_id": "0123456789ab", "parting_z_mm": 0}
-    )
+    resp = client.post("/api/analyze", json={"mesh_id": "0123456789ab", "parting_z_mm": 0})
     assert resp.status_code == 404  # well-formed but unknown
 
     up = upload_mushroom(client)
@@ -189,9 +181,7 @@ def test_bad_requests(client):
 def test_non_finite_json_is_a_readable_422(client):
     up = upload_mushroom(client)
     body = '{"mesh_id": "%s", "parting_z_mm": 22, "plunge_mm": NaN}' % up["mesh_id"]
-    resp = client.post(
-        "/api/generate", content=body, headers={"content-type": "application/json"}
-    )
+    resp = client.post("/api/generate", content=body, headers={"content-type": "application/json"})
     assert resp.status_code == 422
     assert "plunge_mm" in resp.json()["detail"]
     assert "finite" in resp.json()["detail"]

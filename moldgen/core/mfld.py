@@ -62,11 +62,14 @@ def solid_bodies(man: Manifold) -> list[Manifold]:
     for v in voids:
         vb = np.asarray(v.bounding_box(), dtype=float).reshape(2, 3)
         holders = [
-            i for i, b in enumerate(boxes)
+            i
+            for i, b in enumerate(boxes)
             if np.all(b[0] <= vb[0] + 1e-6) and np.all(b[1] >= vb[1] - 1e-6)
         ]
-        i = min(holders, key=lambda k: solids[k].volume()) if holders else int(
-            np.argmax([p.volume() for p in solids])
+        i = (
+            min(holders, key=lambda k: solids[k].volume())
+            if holders
+            else int(np.argmax([p.volume() for p in solids]))
         )
         groups[i].append(v)
     return [g[0] if len(g) == 1 else Manifold.compose(g) for g in groups]

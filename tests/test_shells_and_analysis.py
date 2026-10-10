@@ -248,9 +248,7 @@ def test_pry_slots_fall_back_to_x_edges():
 
 def test_ejector_lands_on_ring_not_in_its_hole():
     torus = trimesh.creation.torus(major_radius=25.0, minor_radius=6.0)
-    res = generate_mold(
-        torus, MoldParams(mode="compression", parting_z_mm=0.0, ejector_holes=True)
-    )
+    res = generate_mold(torus, MoldParams(mode="compression", parting_z_mm=0.0, ejector_holes=True))
     assert res.ok, res.errors
     x, y = res.metadata["hardware"]["ejector"]["center"]
     assert math.hypot(x, y) == pytest.approx(25.0, abs=4.0)
@@ -264,7 +262,5 @@ def test_loading_volume_warning_for_thick_parts():
     charge = res.metadata["forged"]["charge"]
     assert charge["loading_ratio"] < 2.0
     assert any("loading volume" in w for w in res.warnings)
-    deeper = generate_mold(
-        sphere, MoldParams(mode="compression", parting_z_mm=0.0, plunge_mm=30.0)
-    )
+    deeper = generate_mold(sphere, MoldParams(mode="compression", parting_z_mm=0.0, plunge_mm=30.0))
     assert not any("loading volume" in w for w in deeper.warnings)

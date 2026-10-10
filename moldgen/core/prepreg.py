@@ -78,8 +78,7 @@ def build(part_man, part_bounds, z_split, params, warnings):
         tool = tool - extension
     else:
         warnings.append(
-            "part has no cross-section at the parting plane; trim-allowance "
-            "run-out skipped"
+            "part has no cross-section at the parting plane; trim-allowance run-out skipped"
         )
 
     tool, dropped = mfld.keep_main_body(tool)
@@ -103,9 +102,7 @@ def build(part_man, part_bounds, z_split, params, warnings):
             tool = tool - solid
             hw_meta["tape_line"] = info
     if params.flange_bolt_holes:
-        solid, info = hardware.flange_hole_solids(
-            block_min, block_max, m, params, warnings
-        )
+        solid, info = hardware.flange_hole_solids(block_min, block_max, m, params, warnings)
         if solid is not None:
             tool = tool - solid
             hw_meta["flange_holes"] = info

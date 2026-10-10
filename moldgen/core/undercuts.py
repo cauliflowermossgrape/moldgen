@@ -207,9 +207,7 @@ def _core_exact(vis: PartVisibility, z: float) -> tuple[np.ndarray, np.ndarray] 
             cand = idx[in_bb]
             if len(cand) == 0:
                 continue
-            inside = VerticalRayCaster.from_mesh(mfld.to_trimesh(body)).contains(
-                vis.points[cand]
-            )
+            inside = VerticalRayCaster.from_mesh(mfld.to_trimesh(body)).contains(vis.points[cand])
             (core if plane_touch else void)[cand[inside]] = True
     return core, void
 
@@ -236,9 +234,7 @@ def _classify(
     blocked_down = np.isfinite(vis.down_t)
     blocked_up = np.isfinite(vis.up_t)
     wrong = np.where(top, nz < -threshold, nz > threshold)
-    occluded = np.where(
-        top, (nz > threshold) & blocked_up, (nz < -threshold) & blocked_down
-    )
+    occluded = np.where(top, (nz > threshold) & blocked_up, (nz < -threshold) & blocked_down)
     undercut = molded & (wrong | occluded)
     return undercut, molded & occluded & ~wrong, core, top, molded
 
@@ -262,11 +258,7 @@ def analyze_undercuts(
     undercut, occluded, core, top, molded = _classify(
         vis, z, normal_z_threshold, single_sided, exact=True
     )
-    low_draft = (
-        molded
-        & ~undercut
-        & (np.abs(vis.normal_z) < math.sin(math.radians(min_draft_deg)))
-    )
+    low_draft = molded & ~undercut & (np.abs(vis.normal_z) < math.sin(math.radians(min_draft_deg)))
     areas = vis.areas
     area_eps = DEMOLDABLE_AREA_FRACTION * float(areas.sum())
 
@@ -339,9 +331,7 @@ def parting_profile(
     bottom = np.zeros(samples)
     top = np.zeros(samples)
     for i, zi in enumerate(z):
-        undercut, _, _, is_top, molded = _classify(
-            vis, float(zi), normal_z_threshold, single_sided
-        )
+        undercut, _, _, is_top, molded = _classify(vis, float(zi), normal_z_threshold, single_sided)
         bottom[i] = vis.areas[undercut & molded & ~is_top].sum()
         top[i] = vis.areas[undercut & is_top].sum()
     return PartingProfile(z=z, bottom_mm2=bottom, top_mm2=top)
@@ -416,9 +406,7 @@ def suggest_parting_plane(
     margin = 1e-3 * span
     lo = max(z_min + margin, coarse.z[i0] - step)
     hi = min(z_max - margin, coarse.z[i0] + step)
-    fine = parting_profile(
-        mesh, 21, normal_z_threshold, single, vis, z_range=(lo, hi)
-    )
+    fine = parting_profile(mesh, 21, normal_z_threshold, single, vis, z_range=(lo, hi))
     fine_cost = cost(fine)
     if fine_cost.min() > cost(coarse)[i0] + tol:
         return z0

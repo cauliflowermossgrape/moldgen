@@ -30,10 +30,18 @@ REL_TOL = 1e-4
 def bare_forged(**kw):
     """Compression params with hardware/draft/lead-in off: exact volumes."""
     base = dict(
-        mode="compression", parting_z_mm=0.0, wall_margin_mm=MARGIN,
-        plunge_mm=PLUNGE, plug_border_mm=BORDER, plug_clearance_mm=CLEARANCE,
-        plug_draft_deg=0.0, lead_in_mm=0.0,
-        pins=False, pry_slots=False, overflow_channels=False, jack_screws=False,
+        mode="compression",
+        parting_z_mm=0.0,
+        wall_margin_mm=MARGIN,
+        plunge_mm=PLUNGE,
+        plug_border_mm=BORDER,
+        plug_clearance_mm=CLEARANCE,
+        plug_draft_deg=0.0,
+        lead_in_mm=0.0,
+        pins=False,
+        pry_slots=False,
+        overflow_channels=False,
+        jack_screws=False,
     )
     base.update(kw)
     return MoldParams(**base)
@@ -46,9 +54,7 @@ def forged_expected(part, res, part_below, part_above):
     (x0, y0, z0), (x1, y1, z1) = part.bounds
     a_blk = (x1 - x0 + 2 * MARGIN) * (y1 - y0 + 2 * MARGIN)
     a_plug = (x1 - x0 + 2 * BORDER) * (y1 - y0 + 2 * BORDER)
-    a_pocket = (x1 - x0 + 2 * (BORDER + CLEARANCE)) * (
-        y1 - y0 + 2 * (BORDER + CLEARANCE)
-    )
+    a_pocket = (x1 - x0 + 2 * (BORDER + CLEARANCE)) * (y1 - y0 + 2 * (BORDER + CLEARANCE))
     top = max(z1, zf) + BASE
     bottom = z0 - BASE
     female = a_blk * (zf - bottom) - a_pocket * PLUNGE - part_below
@@ -64,9 +70,7 @@ def test_sphere_compression():
     assert female.is_watertight and male.is_watertight
 
     # icosphere is symmetric about z=0: exactly half its volume each side
-    exp_female, exp_male = forged_expected(
-        sphere, res, sphere.volume / 2, sphere.volume / 2
-    )
+    exp_female, exp_male = forged_expected(sphere, res, sphere.volume / 2, sphere.volume / 2)
     assert female.volume == pytest.approx(exp_female, rel=REL_TOL)
     assert male.volume == pytest.approx(exp_male, rel=REL_TOL)
 
@@ -97,9 +101,7 @@ def test_tube_annular_cross_section():
 
 def test_rotated_box_watertight():
     box = trimesh.creation.box(extents=[30.0, 20.0, 10.0])
-    box.apply_transform(
-        trimesh.transformations.rotation_matrix(np.radians(30), [1.0, 1.0, 0.0])
-    )
+    box.apply_transform(trimesh.transformations.rotation_matrix(np.radians(30), [1.0, 1.0, 0.0]))
     res = generate_mold(box, bare_forged())
     assert res.ok, res.errors
     female, male = res.halves["female"], res.halves["male"]
@@ -128,7 +130,9 @@ def test_open_layup_keep_below():
     res = generate_mold(
         sphere,
         MoldParams(
-            mode="open_layup", parting_z_mm=0.0, wall_margin_mm=MARGIN,
+            mode="open_layup",
+            parting_z_mm=0.0,
+            wall_margin_mm=MARGIN,
             keep_side="below",
         ),
     )
@@ -161,9 +165,7 @@ def test_cavity_offset_grows_cavity():
     assert plain.ok and offset.ok
     assert lower_cavity(offset) > lower_cavity(plain)
     # offset cavity ≈ lower half of a r=20.5 sphere
-    assert lower_cavity(offset) == pytest.approx(
-        (2 / 3) * np.pi * 20.5**3, rel=0.02
-    )
+    assert lower_cavity(offset) == pytest.approx((2 / 3) * np.pi * 20.5**3, rel=0.02)
 
 
 def test_non_watertight_input_structured_error():

@@ -86,9 +86,7 @@ class VerticalRayCaster:
     def from_mesh(cls, mesh) -> "VerticalRayCaster":
         return cls(mesh.triangles)
 
-    def first_hit(
-        self, origins: np.ndarray, direction: float, min_dist: float = 0.0
-    ) -> np.ndarray:
+    def first_hit(self, origins: np.ndarray, direction: float, min_dist: float = 0.0) -> np.ndarray:
         """Distance to the first triangle hit along (0, 0, direction) from
         each origin, ignoring hits closer than `min_dist`; inf on a miss."""
         return self._cast(origins, direction, min_dist, count=False)
