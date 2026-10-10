@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "moldgen"
-version = "0.1.0"
+version = "0.2.0"
 description = "Generate 3D-printable / CNC molds for carbon fiber work: forged carbon compression moulds, prepreg laminating tools and open-layup tools from STL/3MF/OBJ/STEP parts"
 keywords = [
     "carbon-fiber", "carbon-fibre", "forged-carbon", "mold", "mould",
@@ -19,6 +19,8 @@ classifiers = [
     "Topic :: Multimedia :: Graphics :: 3D Modeling",
     "Topic :: Scientific/Engineering",
 ]
+readme = "README.md"
+license = { text = "MIT" }
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.111",
@@ -35,10 +37,19 @@ dependencies = [
     "charset-normalizer>=3.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/cauliflowermossgrape/moldgen"
+Changelog = "https://github.com/cauliflowermossgrape/moldgen/blob/main/CHANGELOG.md"
+Issues = "https://github.com/cauliflowermossgrape/moldgen/issues"
+
+[project.scripts]
+moldgen = "moldgen.cli:main"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
     "httpx>=0.27",
+    "ruff>=0.6",
 ]
 # STEP/IGES input via OpenCascade — the OCP wheel is several hundred MB,
 # hence opt-in
@@ -49,5 +60,16 @@ step = [
 [tool.setuptools.packages.find]
 include = ["moldgen*"]
 
+[tool.setuptools.package-data]
+# the web UI ships inside the package so installed wheels can serve it
+moldgen = ["frontend/*", "frontend/**/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "UP", "I"]

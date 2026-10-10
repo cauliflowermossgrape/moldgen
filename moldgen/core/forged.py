@@ -33,24 +33,49 @@ from __future__ import annotations
 import math
 
 import numpy as np
-from manifold3d import CrossSection, Manifold
+from manifold3d import CrossSection, FillRule, JoinType, Manifold
 
 from . import hardware, mfld
 
 MIN_BAND_MM = 6.0  # narrowest usable flange band around the pocket
+FUNNEL_INSET = 0.05  # lead-in funnel base starts this far inside the pocket wall
 
 
-def _prism(cx, cy, w, h, z0, height, grow_per_side=0.0):
-    """Rectangular prism centered at (cx, cy) from z0 up by height, with
-    walls flaring outward linearly by grow_per_side at the top."""
+def _rect(cx, cy, w, h) -> CrossSection:
     hw, hh = w / 2.0, h / 2.0
-    cs = CrossSection([[(-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh)]])
-    scale = ((w + 2.0 * grow_per_side) / w, (h + 2.0 * grow_per_side) / h)
-    return Manifold.extrude(cs, height, 0, 0.0, scale).translate((cx, cy, z0))
+    return CrossSection(
+        [[(cx - hw, cy - hh), (cx + hw, cy - hh), (cx + hw, cy + hh), (cx - hw, cy + hh)]]
+    )
 
 
-def build(part_man, part_bounds, z_split, params, warnings, part_mesh=None,
-          part_centroid_xy=None):
+def _drafted(cs, z0, height, grow):
+    """`cs` extruded from z0 up by height, walls flaring out by `grow` at
+    the top (an exact offset — see mfld.drafted_extrude)."""
+    return mfld.drafted_extrude(cs, height, grow).translate((0.0, 0.0, float(z0)))
+
+
+def plug_outline(part_man, part_bounds, border, shape):
+    """The plug face outline: the part's footprint grown by `border`.
+
+    "rect": the bounding rectangle (simple, CNC-friendly).
+    "contour": the part's projected silhouette with holes filled, offset by
+    `border` with round joins — the pinch-off follows the part, so the
+    charge isn't spread into empty corners and the flash line is short
+    (Easy Composites' forged tools follow the part outline the same way).
+    """
+    (px0, py0, _), (px1, py1, _) = np.asarray(part_bounds, dtype=float)
+    if shape == "rect":
+        return _rect(
+            (px0 + px1) / 2, (py0 + py1) / 2, px1 - px0 + 2 * border, py1 - py0 + 2 * border
+        )
+    projected = CrossSection(part_man.project().to_polygons(), FillRule.Positive)
+    outers = [p for p in projected.to_polygons() if mfld.signed_area(p) > 0]
+    footprint = CrossSection(outers, FillRule.Positive)
+    tol = 1e-3 * max(px1 - px0, py1 - py0, 1.0)
+    return footprint.simplify(tol).offset(border, JoinType.Round, 2.0, 0)
+
+
+def build(part_man, part_bounds, z_split, params, warnings, part_mesh=None, part_centroid_xy=None):
     """Construct the female and male halves of a telescoping mold.
 
     Returns (female, male, meta, hw_meta). Raises ValueError when the
@@ -82,17 +107,16 @@ def build(part_man, part_bounds, z_split, params, warnings, part_mesh=None,
     cx, cy = (px0 + px1) / 2.0, (py0 + py1) / 2.0
     plug_w = (px1 - px0) + 2.0 * border
     plug_h = (py1 - py0) + 2.0 * border
+    plug_cs = plug_outline(part_man, part_bounds, border, params.plug_shape)
+    # rect corners stay sharp (miter); contours keep a constant gap (round)
+    join = JoinType.Miter if params.plug_shape == "rect" else JoinType.Round
+
+    def grown(delta):
+        return plug_cs.offset(delta, join, 2.0, 0) if delta else plug_cs
 
     # --- female: solid to the flange, minus drafted pocket, minus part -----
-    pocket = _prism(
-        cx, cy, plug_w + 2.0 * clear, plug_h + 2.0 * clear,
-        z_split, plunge + 1.0, (plunge + 1.0) * draft_slope,
-    )
-    female = (
-        mfld.box(block_min, (block_max[0], block_max[1], z_flange))
-        - pocket
-        - part_man
-    )
+    pocket = _drafted(grown(clear), z_split, plunge + 1.0, (plunge + 1.0) * draft_slope)
+    female = mfld.box(block_min, (block_max[0], block_max[1], z_flange)) - pocket - part_man
 
     # lead-in funnel at the pocket mouth (EC: 1 mm horizontal, 2 mm vertical)
     li = float(params.lead_in_mm)
@@ -101,16 +125,20 @@ def build(part_man, part_bounds, z_split, params, warnings, part_mesh=None,
         lv = min(lv, plunge * 0.8)  # keep some straight pinch wall
         base_grow = clear + (plunge - lv) * draft_slope  # pocket size at funnel base
         funnel_h = lv + 0.5
-        funnel = _prism(
-            cx, cy, plug_w + 2.0 * base_grow, plug_h + 2.0 * base_grow,
-            z_flange - lv, funnel_h,
-            (li + lv * draft_slope) * funnel_h / lv,
+        # start just inside the pocket wall so the (much steeper) funnel wall
+        # crosses it cleanly — a funnel base that coincides with the pocket
+        # wall to float noise leaves touching edges in the mesh
+        funnel = _drafted(
+            grown(base_grow - FUNNEL_INSET),
+            z_flange - lv,
+            funnel_h,
+            (li + FUNNEL_INSET + lv * draft_slope) * funnel_h / lv,
         )
         female = female - funnel
 
     # --- male: drafted plug fused to a full-footprint plate ----------------
     plug_height = float(block_max[2]) - z_split
-    plug = _prism(cx, cy, plug_w, plug_h, z_split, plug_height, plug_height * draft_slope)
+    plug = _drafted(plug_cs, z_split, plug_height, plug_height * draft_slope)
     plate = mfld.box((block_min[0], block_min[1], z_flange), block_max)
     male = (plug + plate) - part_man
 
@@ -120,7 +148,9 @@ def build(part_man, part_bounds, z_split, params, warnings, part_mesh=None,
         "z_flange": float(z_flange),
         "plunge_mm": plunge,
         "band_mm": float(band),
+        "plug_shape": params.plug_shape,
         "plug_rect": [cx - plug_w / 2, cy - plug_h / 2, cx + plug_w / 2, cy + plug_h / 2],
+        "plug_area_mm2": float(plug_cs.area()),
         "pocket_clearance_mm": clear,
         "draft_deg": float(params.plug_draft_deg),
         "cores": core_info,
@@ -141,8 +171,7 @@ def build(part_man, part_bounds, z_split, params, warnings, part_mesh=None,
             male = male - pin_holes
             hw_meta["pins"] = pin_info
             avoid += [
-                (x, y, pin_info["radius"] + pin_info["clearance"])
-                for x, y in pin_info["centers"]
+                (x, y, pin_info["radius"] + pin_info["clearance"]) for x, y in pin_info["centers"]
             ]
 
     if params.bolts:
@@ -182,9 +211,24 @@ def build(part_man, part_bounds, z_split, params, warnings, part_mesh=None,
             cy + plug_h / 2 + clear + g_flange,
         ]
         chans, of_info = hardware.overflow_channel_solids(
-            block_min, block_max, z_flange, pocket_at_flange, params, avoid, warnings
+            block_min,
+            block_max,
+            z_flange,
+            pocket_at_flange,
+            params,
+            avoid,
+            warnings,
+            run_inward=True,
         )
         if chans is not None:
+            # stop 1 mm inside the plug outline: through the pocket wall and
+            # the pinch gap, but never into a core handed to the female
+            # (which sits ≥ plug_border inside the outline)
+            stop = plug_cs.offset(-min(1.0, border / 2.0), join, 2.0, 0)
+            if not stop.is_empty():
+                chans = chans - Manifold.extrude(stop, plunge + 4.0).translate(
+                    (0.0, 0.0, z_flange - plunge - 2.0)
+                )
             female = female - chans
             hw_meta["overflow"] = of_info
 
@@ -250,9 +294,7 @@ def transfer_cores(female, male, z_split, warnings):
             "male to the female, which molds the inside surface"
         )
     if info["voids_dropped"]:
-        warnings.append(
-            "part has sealed internal voids; they can't be molded and were ignored"
-        )
+        warnings.append("part has sealed internal voids; they can't be molded and were ignored")
     return female, male, info
 
 

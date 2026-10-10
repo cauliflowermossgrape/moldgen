@@ -35,10 +35,10 @@ from dataclasses import dataclass
 
 import numpy as np
 import trimesh
-from manifold3d import CrossSection, triangulate
+from manifold3d import CrossSection
 
 from . import mfld
-from .rays import VerticalRayCaster
+from .rays import PolygonContainment, VerticalRayCaster
 
 DEFAULT_NORMAL_Z_THRESHOLD = 0.02  # ~1° past vertical; ignores equator jitter
 DEFAULT_MIN_DRAFT_DEG = 1.0  # common practice: 1-2° minimum wall draft
@@ -71,6 +71,10 @@ class UndercutReport:
     # faces molded by the top (+Z) half; the rest of the molded faces belong
     # to the bottom half
     face_molded_by_top: np.ndarray | None = None
+    # signed draft angle (degrees) of each face relative to the pull
+    # direction of the half that molds it: positive releases, negative
+    # fights the pull; NaN where no half molds the face
+    face_draft_deg: np.ndarray | None = None
 
 
 class PartVisibility:
@@ -106,55 +110,60 @@ class PartVisibility:
         out = np.zeros(len(idx), dtype=bool)
         if self._man is None or len(idx) == 0:
             return out
-        tris = _hole_triangles(self._man.slice(float(z)))
-        if tris is None:
+        holes = _hole_contours(self._man.slice(float(z)))
+        if not holes:
             return out
-        caster = VerticalRayCaster(tris)
-        pts = self.points[idx].copy()
-        pts[:, 2] = 1.0
-        return np.isfinite(caster.first_hit(pts, -1.0))
+        return PolygonContainment(holes).contains(self.points[idx, :2])
 
 
-def _hole_triangles(cs: CrossSection) -> np.ndarray | None:
-    """Triangulated hole regions of a cross-section, as flat 3-D triangles."""
+def _hole_contours(cs: CrossSection) -> list[np.ndarray]:
+    """Contours of the hole regions of a cross-section (where shell cores
+    meet the plane), for even-odd containment; empty when there are none."""
     polys = cs.to_polygons()
-    outers = [p for p in polys if _signed_area(p) > 0]
+    outers = [p for p in polys if mfld.signed_area(p) > 0]
     if len(outers) == len(polys):
-        return None  # no holes
+        return []
     holes = CrossSection(outers) - cs
-    hole_polys = holes.to_polygons()
-    if not hole_polys or holes.area() <= 0:
-        return None
-    pts = np.vstack(hole_polys)
-    idx = np.asarray(triangulate(hole_polys), dtype=np.int64)
-    if len(idx) == 0:
-        return None
-    tri = np.zeros((len(idx), 3, 3))
-    tri[:, :, :2] = pts[idx]
-    return tri
+    if holes.area() <= 0:
+        return []
+    return [np.asarray(p) for p in holes.to_polygons()]
 
 
-def _signed_area(poly) -> float:
-    p = np.asarray(poly, dtype=float)
-    x, y = p[:, 0], p[:, 1]
-    return 0.5 * float(np.dot(x, np.roll(y, -1)) - np.dot(np.roll(x, -1), y))
-
-
-def _core_heuristic(vis: PartVisibility, z: float) -> tuple[np.ndarray, np.ndarray]:
+def _core_heuristic(
+    vis: PartVisibility, z: float, threshold: float, single_sided: bool
+) -> tuple[np.ndarray, np.ndarray]:
     """Cheap core test for scanning many heights: the face's point reaches
     the plane without crossing the part, the column is closed by the part
     on the far side (so it isn't a through-hole), and the plane point lies
     in a cross-section hole. Returns (core, void) masks; void is always
-    empty here."""
+    empty here.
+
+    Only faces whose undercut verdict would actually change by being in a
+    core get the (expensive) hole test — on a million-triangle scan that is
+    a small fraction, and it keeps the parting scan interactive.
+    """
+    nz = vis.normal_z
     pz = vis.points[:, 2]
     below = vis.centroid_z < z
+    blocked_up = np.isfinite(vis.up_t)
+    blocked_down = np.isfinite(vis.down_t)
     clear = np.where(
         below,
-        (vis.up_t > z - pz) & np.isfinite(vis.down_t),
-        (vis.down_t > pz - z) & np.isfinite(vis.up_t),
+        (vis.up_t > z - pz) & blocked_down,
+        (vis.down_t > pz - z) & blocked_up,
     )
+    if single_sided:
+        # a core face is simply not molded: matters where it would lock
+        matters = np.where(
+            below,
+            (nz > threshold) | ((nz < -threshold) & blocked_down),
+            (nz < -threshold) | ((nz > threshold) & blocked_up),
+        )
+    else:
+        # bottom vs top attribution differ only for unblocked steep faces
+        matters = ((nz > threshold) & ~blocked_up) | ((nz < -threshold) & ~blocked_down)
     core = np.zeros(len(pz), dtype=bool)
-    cand = np.flatnonzero(clear)
+    cand = np.flatnonzero(clear & matters)
     if len(cand):
         core[cand] = vis.holes_contain(z, cand)
     return core, np.zeros(len(pz), dtype=bool)
@@ -207,9 +216,7 @@ def _core_exact(vis: PartVisibility, z: float) -> tuple[np.ndarray, np.ndarray] 
             cand = idx[in_bb]
             if len(cand) == 0:
                 continue
-            inside = VerticalRayCaster.from_mesh(mfld.to_trimesh(body)).contains(
-                vis.points[cand]
-            )
+            inside = VerticalRayCaster.from_mesh(mfld.to_trimesh(body)).contains(vis.points[cand])
             (core if plane_touch else void)[cand[inside]] = True
     return core, void
 
@@ -225,7 +232,7 @@ def _classify(
     nz = vis.normal_z
     below = vis.centroid_z < z
     cores = _core_exact(vis, z) if exact else None
-    core, void = cores if cores is not None else _core_heuristic(vis, z)
+    core, void = cores if cores is not None else _core_heuristic(vis, z, threshold, single_sided)
 
     if single_sided:
         molded = ~core & ~void
@@ -236,9 +243,7 @@ def _classify(
     blocked_down = np.isfinite(vis.down_t)
     blocked_up = np.isfinite(vis.up_t)
     wrong = np.where(top, nz < -threshold, nz > threshold)
-    occluded = np.where(
-        top, (nz > threshold) & blocked_up, (nz < -threshold) & blocked_down
-    )
+    occluded = np.where(top, (nz > threshold) & blocked_up, (nz < -threshold) & blocked_down)
     undercut = molded & (wrong | occluded)
     return undercut, molded & occluded & ~wrong, core, top, molded
 
@@ -262,11 +267,7 @@ def analyze_undercuts(
     undercut, occluded, core, top, molded = _classify(
         vis, z, normal_z_threshold, single_sided, exact=True
     )
-    low_draft = (
-        molded
-        & ~undercut
-        & (np.abs(vis.normal_z) < math.sin(math.radians(min_draft_deg)))
-    )
+    low_draft = molded & ~undercut & (np.abs(vis.normal_z) < math.sin(math.radians(min_draft_deg)))
     areas = vis.areas
     area_eps = DEMOLDABLE_AREA_FRACTION * float(areas.sum())
 
@@ -275,6 +276,11 @@ def analyze_undercuts(
         drag = float(areas[low_draft & mask].sum())
         return HalfUndercuts(u, drag, u <= area_eps)
 
+    # draft = angle between the face and the pull direction; the molding
+    # half moves along −Z (bottom) or +Z (top), so the face must face that way
+    toward = np.where(top, vis.normal_z, -vis.normal_z)
+    draft = np.degrees(np.arcsin(np.clip(toward, -1.0, 1.0)))
+    draft[~molded] = np.nan
     return UndercutReport(
         parting_z_mm=z,
         min_draft_deg=float(min_draft_deg),
@@ -286,6 +292,7 @@ def analyze_undercuts(
         face_is_occluded=occluded,
         face_is_core=core,
         face_molded_by_top=top,
+        face_draft_deg=draft,
     )
 
 
@@ -339,9 +346,7 @@ def parting_profile(
     bottom = np.zeros(samples)
     top = np.zeros(samples)
     for i, zi in enumerate(z):
-        undercut, _, _, is_top, molded = _classify(
-            vis, float(zi), normal_z_threshold, single_sided
-        )
+        undercut, _, _, is_top, molded = _classify(vis, float(zi), normal_z_threshold, single_sided)
         bottom[i] = vis.areas[undercut & molded & ~is_top].sum()
         top[i] = vis.areas[undercut & is_top].sum()
     return PartingProfile(z=z, bottom_mm2=bottom, top_mm2=top)
@@ -378,6 +383,7 @@ def suggest_parting_plane(
     normal_z_threshold: float = DEFAULT_NORMAL_Z_THRESHOLD,
     side: str | None = None,
     visibility: PartVisibility | None = None,
+    coarse: PartingProfile | None = None,
 ) -> float:
     """Parting height minimizing undercut area.
 
@@ -390,7 +396,9 @@ def suggest_parting_plane(
     of the part as releases.
 
     A coarse scan over bin centers is followed by a fine scan around the
-    winner, so the result isn't quantized to the coarse bin width.
+    winner, so the result isn't quantized to the coarse bin width. Pass a
+    precomputed `coarse` profile (matching `side`'s single/two-part mode) to
+    skip the coarse scan.
     """
     vis = visibility if visibility is not None else PartVisibility(mesh)
     single = side in ("below", "above")
@@ -408,19 +416,44 @@ def suggest_parting_plane(
             return profile.top_mm2
         return profile.bottom_mm2 + profile.top_mm2
 
-    coarse = parting_profile(mesh, samples, normal_z_threshold, single, vis)
+    if coarse is None:
+        coarse = parting_profile(mesh, samples, normal_z_threshold, single, vis)
     z0, i0 = _pick(coarse.z, cost(coarse), tol, prefer)
     if prefer == "middle" and z0 != coarse.z[i0]:
         return z0  # midpoint of a wide tied band; refining would only shift it
-    step = span / samples
+    step = span / len(coarse.z)
     margin = 1e-3 * span
     lo = max(z_min + margin, coarse.z[i0] - step)
     hi = min(z_max - margin, coarse.z[i0] + step)
-    fine = parting_profile(
-        mesh, 21, normal_z_threshold, single, vis, z_range=(lo, hi)
-    )
+    fine = parting_profile(mesh, 21, normal_z_threshold, single, vis, z_range=(lo, hi))
     fine_cost = cost(fine)
     if fine_cost.min() > cost(coarse)[i0] + tol:
         return z0
     z1, _ = _pick(fine.z, fine_cost, tol, prefer)
     return z1
+
+
+def parting_summary(
+    mesh: trimesh.Trimesh,
+    samples: int = 60,
+    visibility: PartVisibility | None = None,
+) -> dict:
+    """Everything the UI needs about parting heights, sharing one coarse
+    scan per mold family: the undercut profiles (two-part total, tool
+    below, tool above) and the suggested height for each."""
+    vis = visibility if visibility is not None else PartVisibility(mesh)
+    two = parting_profile(mesh, samples, visibility=vis)
+    single = parting_profile(mesh, samples, single_sided=True, visibility=vis)
+    return {
+        "profile": {
+            "z": two.z.tolist(),
+            "two_part": (two.bottom_mm2 + two.top_mm2).tolist(),
+            "below": single.bottom_mm2.tolist(),
+            "above": single.top_mm2.tolist(),
+        },
+        "suggested": {
+            "two_part": suggest_parting_plane(mesh, visibility=vis, coarse=two),
+            "below": suggest_parting_plane(mesh, side="below", visibility=vis, coarse=single),
+            "above": suggest_parting_plane(mesh, side="above", visibility=vis, coarse=single),
+        },
+    }

@@ -18,6 +18,10 @@ const state = {
   // last suggestion applied to the slider, so a mode switch only moves the
   // plane when the user hasn't placed it by hand
   appliedSuggestion: null,
+  // last /api/analyze result, kept for the draft-angle map toggle
+  analysis: null,
+  // what the camera presets frame: the part, or the mold once generated
+  frame: null,
 };
 
 // --- Scene (Z-up, millimeters) ----------------------------------------------
@@ -47,16 +51,38 @@ const fillLight = new THREE.DirectionalLight(0x8899bb, 0.5);
 fillLight.position.set(-90, -70, 40);
 scene.add(fillLight);
 
-const grid = new THREE.GridHelper(200, 20, 0x556070, 0x333a44);
-grid.rotation.x = Math.PI / 2; // lie in the XY plane, Z up
-scene.add(grid);
-scene.add(new THREE.AxesHelper(30));
+let grid = null;
+const axes = new THREE.AxesHelper(30);
+scene.add(axes);
 
-window.addEventListener('resize', () => {
-  camera.aspect = viewport.clientWidth / viewport.clientHeight;
+// floor grid sized to the work: ~10 cells across with a round 1-2-5 step,
+// so a 10 mm part and a 400 mm panel both get a readable scale
+function updateGrid(extent) {
+  const raw = Math.max(extent, 10) / 5;
+  const pow = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 5, 10].map((k) => k * pow).find((v) => v >= raw);
+  const cells = 20;
+  if (grid) {
+    scene.remove(grid);
+    grid.geometry.dispose();
+  }
+  grid = new THREE.GridHelper(step * cells, cells, 0x556070, 0x333a44);
+  grid.rotation.x = Math.PI / 2; // lie in the XY plane, Z up
+  scene.add(grid);
+  axes.scale.setScalar(Math.max(extent, 10) / 100);
+}
+updateGrid(100);
+
+function resizeViewport() {
+  const w = viewport.clientWidth;
+  const h = viewport.clientHeight;
+  if (!w || !h) return;
+  camera.aspect = w / h;
   camera.updateProjectionMatrix();
-  renderer.setSize(viewport.clientWidth, viewport.clientHeight);
-});
+  renderer.setSize(w, h);
+}
+// the viewport also resizes without a window resize (narrow-screen layout)
+new ResizeObserver(resizeViewport).observe(viewport);
 
 renderer.setAnimationLoop(() => {
   controls.update();
@@ -124,6 +150,22 @@ function setStatus(text, isError = false) {
   $('status').classList.toggle('busy', state.busy && !isError);
 }
 
+// one long-running request at a time; the overlay says what's happening
+function beginBusy(text) {
+  if (state.busy) return false;
+  state.busy = true;
+  $('busy-text').textContent = text;
+  $('busy').classList.remove('hidden');
+  setStatus(text);
+  return true;
+}
+
+function endBusy() {
+  state.busy = false;
+  $('busy').classList.add('hidden');
+  $('status').classList.remove('busy');
+}
+
 async function postJSON(url, payload) {
   const res = await fetch(url, {
     method: 'POST',
@@ -159,17 +201,34 @@ function disposeMesh(mesh) {
   mesh.geometry.dispose();
 }
 
-function fitCamera(min, max) {
+const VIEW_DIRS = {
+  iso: [1, -1, 0.65],
+  top: [0, -1e-3, 1], // a hair off vertical keeps OrbitControls' up stable
+  front: [0, -1, 0],
+};
+
+function fitCamera(min, max, view = 'iso') {
+  state.frame = [min, max];
   const box = new THREE.Box3(
     new THREE.Vector3(...min), new THREE.Vector3(...max));
   const center = box.getCenter(new THREE.Vector3());
   const size = box.getSize(new THREE.Vector3()).length();
   controls.target.copy(center);
-  const dir = new THREE.Vector3(1, -1, 0.65).normalize();
-  camera.position.copy(center).addScaledVector(dir, size * 1.15);
-  camera.near = Math.max(size / 100, 0.1);
-  camera.far = size * 20;
+  const dir = new THREE.Vector3(...VIEW_DIRS[view]).normalize();
+  // distance that fits the bounding sphere in the narrower field of view
+  const vfov = THREE.MathUtils.degToRad(camera.fov);
+  const hfov = 2 * Math.atan(Math.tan(vfov / 2) * camera.aspect);
+  const dist = (size / 2) / Math.sin(Math.min(vfov, hfov) / 2) * 1.05;
+  camera.position.copy(center).addScaledVector(dir, dist);
+  camera.near = Math.max(size / 200, 0.05);
+  camera.far = dist + size * 20;
   camera.updateProjectionMatrix();
+  controls.update();
+}
+
+function setView(view) {
+  if (!state.frame) return;
+  fitCamera(state.frame[0], state.frame[1], view === 'fit' ? 'iso' : view);
 }
 
 function fillColors(geometry, rgb) {
@@ -180,6 +239,7 @@ function fillColors(geometry, rgb) {
 }
 
 function resetAnalysis() {
+  state.analysis = null;
   if (state.partMesh) {
     const colors = state.partMesh.geometry.attributes.color;
     for (let i = 0; i < colors.count; i++) colors.setXYZ(i, ...NEUTRAL);
@@ -187,6 +247,8 @@ function resetAnalysis() {
   }
   $('verdicts').classList.add('hidden');
   $('legend').classList.add('hidden');
+  $('draft-legend').classList.add('hidden');
+  $('draft-map-row').classList.add('hidden');
 }
 
 // --- View state --------------------------------------------------------------
@@ -201,6 +263,7 @@ function showPartView() {
 
 function showMoldView() {
   $('legend').classList.add('hidden');
+  $('draft-legend').classList.add('hidden');
   if (state.partMesh) state.partMesh.visible = false;
   if (state.planeMesh) state.planeMesh.visible = false;
   if (state.ghostMesh) state.ghostMesh.visible = $('ghost').checked;
@@ -213,8 +276,26 @@ function showMoldView() {
 function updatePlane() {
   if (!state.planeMesh) return;
   state.planeMesh.position.z = parseFloat($('parting-z').value);
-  $('parting-z-out').textContent = `${(+$('parting-z').value).toFixed(1)} mm`;
+  $('parting-z-out').textContent = fmtZ(+$('parting-z').value);
   drawProfile();
+}
+
+// heights shown to the precision the slider can actually set (its step is
+// 1/1000 of the part height), so the readout and the suggestion agree
+function fmtZ(z) {
+  const step = parseFloat($('parting-z').step) || 0.1;
+  const decimals = Math.min(3, Math.max(1, Math.ceil(-Math.log10(step * 5))));
+  return `${z.toFixed(decimals)} mm`;
+}
+
+// the value the range input will actually take for z (it snaps to its step)
+function snapZ(z) {
+  const slider = $('parting-z');
+  const min = parseFloat(slider.min);
+  const max = parseFloat(slider.max);
+  const step = parseFloat(slider.step);
+  if (![min, max, step].every(Number.isFinite) || step <= 0) return z;
+  return Math.min(max, Math.max(min, min + Math.round((z - min) / step) * step));
 }
 
 function suggestedZ() {
@@ -230,7 +311,7 @@ function applySuggestion(force = false) {
   const untouched = state.appliedSuggestion != null &&
     Math.abs(parseFloat(slider.value) - state.appliedSuggestion) < 1e-6;
   const btn = $('use-suggested');
-  btn.textContent = `suggested: ${z.toFixed(1)} mm`;
+  btn.textContent = `suggested: ${fmtZ(snapZ(z))}`;
   btn.classList.remove('hidden');
   if (force || untouched) {
     slider.value = z;
@@ -350,16 +431,16 @@ async function loadPartFromServer(body) {
   $('analyze').disabled = false;
   $('generate').disabled = false;
   showPartView();
+  updateGrid(Math.max(...body.extents) * 2);
   fitCamera(body.bounds[0], body.bounds[1]);
 }
 
 async function uploadFile(file) {
-  if (state.busy) return;
-  state.busy = true;
-  setStatus(`uploading ${file.name}…`);
+  if (!beginBusy(`uploading ${file.name}…`)) return;
   try {
     const fd = new FormData();
     fd.append('file', file, file.name);
+    fd.append('units', $('units').value);
     if (!$('step-opts').classList.contains('hidden')) {
       fd.append('linear_deflection_mm', $('lin-defl').value);
       fd.append('angular_deflection_deg', $('ang-defl').value);
@@ -374,8 +455,7 @@ async function uploadFile(file) {
   } catch (err) {
     setStatus(err.message, true);
   } finally {
-    state.busy = false;
-    $('status').classList.remove('busy');
+    endBusy();
   }
 }
 
@@ -411,9 +491,7 @@ function setLayFlat(active) {
 }
 
 async function orientPart(payload) {
-  if (!state.meshId || state.busy) return;
-  state.busy = true;
-  setStatus('re-orienting part…');
+  if (!state.meshId || !beginBusy('re-orienting part…')) return;
   try {
     const body = await postJSON('/api/orient', { mesh_id: state.meshId, ...payload });
     await loadPartFromServer(body);
@@ -423,8 +501,7 @@ async function orientPart(payload) {
   } catch (err) {
     setStatus(err.message, true);
   } finally {
-    state.busy = false;
-    $('status').classList.remove('busy');
+    endBusy();
   }
 }
 
@@ -471,6 +548,60 @@ window.addEventListener('keydown', (e) => {
 
 // --- Analyze -----------------------------------------------------------------
 
+const UNMOLDED = [0.42, 0.45, 0.5];
+const DRAFT_GOOD_LO = [0.25, 0.68, 0.42];
+const DRAFT_GOOD_HI = [0.56, 0.94, 0.69];
+
+// draft-map color for one face (matches the #draft-legend ramp)
+function draftColor(deg, minDraft) {
+  if (deg === -128) return UNMOLDED;
+  if (deg < 0) return UNDERCUT;
+  if (deg < minDraft) return LOW_DRAFT;
+  const t = Math.min((deg - minDraft) / Math.max(2 * minDraft, 5), 1);
+  return DRAFT_GOOD_LO.map((lo, i) => lo + t * (DRAFT_GOOD_HI[i] - lo));
+}
+
+function decodeDraft(b64) {
+  const bin = atob(b64);
+  const out = new Int8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = (bin.charCodeAt(i) << 24) >> 24;
+  return out;
+}
+
+// color the part from the stored analysis: verdict colors, or the
+// continuous draft-angle map when that toggle is on
+function paintAnalysis() {
+  const body = state.analysis;
+  if (!body || !state.partMesh) return;
+  const colors = state.partMesh.geometry.attributes.color;
+  for (let i = 0; i < colors.count; i++) colors.setXYZ(i, ...NEUTRAL);
+  const paintFace = (f, rgb) => {
+    colors.setXYZ(3 * f, ...rgb);
+    colors.setXYZ(3 * f + 1, ...rgb);
+    colors.setXYZ(3 * f + 2, ...rgb);
+  };
+  const paint = (faces, rgb) => { for (const f of faces) paintFace(f, rgb); };
+  const draftMap = $('draft-map').checked && body.draft;
+  if (draftMap) {
+    for (let f = 0; f < body.draft.length; f++) {
+      paintFace(f, draftColor(body.draft[f], body.min_draft_deg));
+    }
+  } else {
+    // later paints win: core < low draft < undercut < hidden undercut
+    if (!body.single_sided) paint(body.core_faces, CORE);
+    paint(body.low_draft_faces, LOW_DRAFT);
+    paint(body.undercut_faces, UNDERCUT);
+  }
+  paint(body.occluded_faces, HIDDEN_UNDERCUT);
+  colors.needsUpdate = true;
+
+  const flagged = body.undercut_faces.length + body.low_draft_faces.length;
+  $('legend').classList.toggle(
+    'hidden', draftMap || flagged + (body.single_sided ? 0 : body.core_faces.length) === 0);
+  $('draft-legend').classList.toggle('hidden', !draftMap);
+  $('draft-legend-max').textContent = `≥ ${body.min_draft_deg}° releases`;
+}
+
 async function analyze() {
   if (!state.meshId || state.busy) return;
   const minDraft = parseFloat($('min-draft').value);
@@ -478,32 +609,20 @@ async function analyze() {
     setStatus('Min draft warn must be a number', true);
     return;
   }
-  state.busy = true;
-  setStatus('analyzing undercuts…');
+  if (!beginBusy('analyzing undercuts…')) return;
   try {
-    const mode = currentMode();
     const body = await postJSON('/api/analyze', {
       mesh_id: state.meshId,
       parting_z_mm: parseFloat($('parting-z').value),
       min_draft_deg: minDraft,
-      mode,
+      mode: currentMode(),
       keep_side: $('keep-side').value,
     });
     resetAnalysis();
-    const colors = state.partMesh.geometry.attributes.color;
-    const paint = (faces, rgb) => {
-      for (const f of faces) {
-        colors.setXYZ(3 * f, ...rgb);
-        colors.setXYZ(3 * f + 1, ...rgb);
-        colors.setXYZ(3 * f + 2, ...rgb);
-      }
-    };
-    // later paints win: core < low draft < undercut < hidden undercut
-    if (!body.single_sided) paint(body.core_faces, CORE);
-    paint(body.low_draft_faces, LOW_DRAFT);
-    paint(body.undercut_faces, UNDERCUT);
-    paint(body.occluded_faces, HIDDEN_UNDERCUT);
-    colors.needsUpdate = true;
+    body.draft = body.draft_deg_b64 ? decodeDraft(body.draft_deg_b64) : null;
+    state.analysis = body;
+    $('draft-map-row').classList.toggle('hidden', !body.draft);
+    paintAnalysis();
 
     const rows = body.single_sided
       ? [[$('keep-side').value === 'below' ? 'bottom' : 'top', 'Tool']]
@@ -527,10 +646,8 @@ async function analyze() {
       }
     }
     $('verdicts').classList.remove('hidden');
-    const flagged = body.undercut_faces.length + body.low_draft_faces.length;
-    $('legend').classList.toggle(
-      'hidden', flagged + (body.single_sided ? 0 : body.core_faces.length) === 0);
     showPartView();
+    const flagged = body.undercut_faces.length + body.low_draft_faces.length;
     const hidden = body.occluded_faces.length;
     setStatus(flagged
       ? `${body.undercut_faces.length} undercut faces (red${hidden ? `, ${hidden} hidden — purple` : ''}) + ` +
@@ -539,8 +656,7 @@ async function analyze() {
   } catch (err) {
     setStatus(err.message, true);
   } finally {
-    state.busy = false;
-    $('status').classList.remove('busy');
+    endBusy();
   }
 }
 
@@ -568,6 +684,7 @@ function currentParams() {
   return {
     mesh_id: state.meshId,
     mode: currentMode(),
+    plug_shape: $('plug-shape').value,
     parting_z_mm: parseFloat($('parting-z').value),
     wall_margin_mm: parseFloat($('wall-margin').value),
     base_thickness_mm: parseFloat($('base-thickness').value),
@@ -613,44 +730,31 @@ async function generate() {
     setStatus(`${bad} must be a number`, true);
     return;
   }
-  state.busy = true;
+  if (!beginBusy('running booleans — this can take a moment on dense meshes…')) return;
   const btn = $('generate');
   btn.disabled = true;
   btn.textContent = 'Generating…';
-  setStatus('running booleans — this can take a moment on dense meshes…');
   try {
     const body = await postJSON('/api/generate', currentParams());
-    if (!body.ok) throw new Error(body.errors.join('; '));
+    if (!body.ok) {
+      $('gen-warnings').replaceChildren(
+        ...(body.warnings || []).map((w) => Object.assign(document.createElement('li'), { textContent: w })));
+      throw new Error(body.errors.join('; '));
+    }
 
+    $('busy-text').textContent = 'loading mold preview…';
+    const loader = new STLLoader();
+    const entries = Object.entries(body.halves);
+    const geometries = await Promise.all(entries.map(([, info]) => loader.loadAsync(info.url)));
     for (const m of Object.values(state.halfMeshes)) disposeMesh(m);
     state.halfMeshes = {};
-    const loader = new STLLoader();
-    const downloads = $('downloads');
-    downloads.replaceChildren();
-    for (const [name, info] of Object.entries(body.halves)) {
-      const geometry = await loader.loadAsync(info.url);
-      const mesh = new THREE.Mesh(geometry, halfMaterials[name] || halfMaterials.tool);
+    entries.forEach(([name], i) => {
+      const mesh = new THREE.Mesh(geometries[i], halfMaterials[name] || halfMaterials.tool);
       state.halfMeshes[name] = mesh;
       scene.add(mesh);
-
-      const a = document.createElement('a');
-      a.className = 'dl';
-      a.href = info.url;
-      a.download = `moldgen-${name}.stl`;
-      const swatch = document.createElement('i');
-      swatch.className = 'sw';
-      swatch.style.background =
-        '#' + (halfMaterials[name] || halfMaterials.tool).color.getHexString();
-      const cm3 = info.volume / 1000;
-      const density = PRINT_DENSITY[$('printer').value];
-      const mass = density ? ` · ≈${Math.round(cm3 * density)} g solid` : '';
-      a.append(
-        swatch,
-        `${name}.stl — ${cm3.toFixed(0)} cm³${mass}`,
-        Object.assign(document.createElement('span'), { className: 'dl-arrow', textContent: '↓' }),
-      );
-      downloads.append(a);
-    }
+    });
+    state.lastHalves = body.halves;
+    renderDownloads();
 
     const bundle = $('bundle');
     bundle.href = body.bundle_url;
@@ -686,11 +790,47 @@ async function generate() {
   } catch (err) {
     setStatus(err.message, true);
   } finally {
-    state.busy = false;
-    $('status').classList.remove('busy');
+    endBusy();
     btn.disabled = false;
     btn.textContent = 'Generate mold';
   }
+}
+
+// one row per half: STL (with volume and a print-mass estimate for the
+// selected process) plus a 3MF alternative with explicit units
+function renderDownloads() {
+  const halves = state.lastHalves;
+  if (!halves) return;
+  const rows = Object.entries(halves).map(([name, info]) => {
+    const color = '#' + (halfMaterials[name] || halfMaterials.tool).color.getHexString();
+    const cm3 = info.volume / 1000;
+    const density = PRINT_DENSITY[$('printer').value];
+    const mass = density ? ` · ≈${Math.round(cm3 * density)} g solid` : '';
+
+    const stl = document.createElement('a');
+    stl.className = 'dl';
+    stl.href = info.url;
+    stl.download = `moldgen-${name}.stl`;
+    const swatch = Object.assign(document.createElement('i'), { className: 'sw' });
+    swatch.style.background = color;
+    stl.append(
+      swatch,
+      `${name}.stl — ${cm3.toFixed(0)} cm³${mass}`,
+      Object.assign(document.createElement('span'), { className: 'dl-arrow', textContent: '↓' }),
+    );
+    const row = Object.assign(document.createElement('div'), { className: 'dl-row' });
+    row.append(stl);
+    if (info.url_3mf) {
+      const alt = Object.assign(document.createElement('a'), {
+        className: 'dl-alt', href: info.url_3mf, textContent: '3MF',
+        title: 'Same half as 3MF — units are explicit in the file, so slicers never guess the scale',
+      });
+      alt.download = `moldgen-${name}.3mf`;
+      row.append(alt);
+    }
+    return row;
+  });
+  $('downloads').replaceChildren(...rows);
 }
 
 // --- Section view --------------------------------------------------------------
@@ -755,7 +895,7 @@ const MODE_DEFAULTS = {
   open_layup: { margin: 15, minDraft: 1 },
 };
 
-function applyMode(mode) {
+function applyMode(mode, { keepValues = false } = {}) {
   const compression = mode === 'compression';
   $('keep-side-field').classList.toggle('hidden', compression);
   $('open-layup-opts').classList.toggle('hidden', mode !== 'open_layup');
@@ -763,11 +903,93 @@ function applyMode(mode) {
   $('forged-panel').classList.toggle('hidden', !compression);
   $('compression-demold').classList.toggle('hidden', !compression);
   $('hardware-panel').classList.toggle('hidden', !compression);
-  $('wall-margin').value = MODE_DEFAULTS[mode].margin;
-  $('min-draft').value = MODE_DEFAULTS[mode].minDraft;
+  if (!keepValues) {
+    $('wall-margin').value = MODE_DEFAULTS[mode].margin;
+    $('min-draft').value = MODE_DEFAULTS[mode].minDraft;
+  }
   resetAnalysis();
   applySuggestion();
 }
+
+// sub-settings only shown while their feature is on
+const DEPENDENT_FIELDS = [
+  ['pins', 'pin-clearance-field'],
+  ['bolts', 'bolt-opts'],
+  ['jack-screws', 'jack-count-field'],
+  ['flange-holes', 'flange-spacing-field'],
+];
+
+function syncDependentFields() {
+  for (const [toggle, field] of DEPENDENT_FIELDS) {
+    $(field).classList.toggle('hidden', !$(toggle).checked);
+  }
+  $('tape-zone').closest('label').classList.toggle('hidden', !$('tape-line').checked);
+}
+
+// --- Settings persistence ------------------------------------------------------
+
+const SETTINGS_KEY = 'moldgen.settings.v1';
+// per-session controls that shouldn't be restored
+const TRANSIENT = new Set([
+  'part-upload', 'parting-z', 'explode', 'section', 'section-pos', 'ghost', 'draft-map',
+]);
+
+function settingControls() {
+  return [...document.querySelectorAll('#sidebar input[id], #sidebar select[id]')]
+    .filter((el) => !TRANSIENT.has(el.id) && el.type !== 'radio');
+}
+
+function snapshotSettings() {
+  const values = {};
+  for (const el of settingControls()) values[el.id] = el.type === 'checkbox' ? el.checked : el.value;
+  values['mold-style'] = currentMode();
+  return values;
+}
+
+function applySettings(values) {
+  for (const el of settingControls()) {
+    if (!(el.id in values)) continue;
+    if (el.type === 'checkbox') el.checked = Boolean(values[el.id]);
+    else el.value = values[el.id];
+  }
+  const radio = document.querySelector(`input[name="mold-style"][value="${values['mold-style']}"]`);
+  if (radio) radio.checked = true;
+  applyMode(currentMode(), { keepValues: true });
+  syncDependentFields();
+  renderDownloads();
+}
+
+function saveSettings() {
+  try {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(snapshotSettings()));
+  } catch {
+    /* storage unavailable (private mode, quota): settings just won't persist */
+  }
+}
+
+const DEFAULT_SETTINGS = snapshotSettings(); // the HTML's values, before restoring
+
+function restoreSettings() {
+  let saved = null;
+  try {
+    saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || 'null');
+  } catch {
+    saved = null;
+  }
+  applySettings({ ...DEFAULT_SETTINGS, ...(saved || {}) });
+}
+
+$('sidebar').addEventListener('change', (e) => {
+  if (e.target.id && TRANSIENT.has(e.target.id)) return;
+  syncDependentFields();
+  saveSettings();
+});
+
+$('reset-settings').addEventListener('click', () => {
+  applySettings(DEFAULT_SETTINGS);
+  saveSettings();
+  setStatus('settings reset to defaults');
+});
 
 $('keep-side').addEventListener('change', () => {
   resetAnalysis();
@@ -784,18 +1006,28 @@ $('printer').addEventListener('change', () => {
   const preset = PRINTER_PRESETS[$('printer').value];
   $('pin-clearance').value = preset.pin;
   $('plug-clearance').value = preset.plug;
+  renderDownloads();
   setStatus(`clearances set for ${$('printer').selectedOptions[0].textContent}`);
 });
-$('pins').addEventListener('change', () => {
-  $('pin-clearance-field').classList.toggle('hidden', !$('pins').checked);
-});
-$('bolts').addEventListener('change', () => {
-  $('bolt-opts').classList.toggle('hidden', !$('bolts').checked);
-});
+
 $('ghost').addEventListener('change', () => {
   if (state.ghostMesh) state.ghostMesh.visible = $('ghost').checked;
 });
 $('explode').addEventListener('input', applyExplode);
+$('draft-map').addEventListener('change', paintAnalysis);
+for (const b of document.querySelectorAll('#view-tools .vt')) {
+  b.addEventListener('click', () => setView(b.dataset.view));
+}
+// viewport shortcuts; never while typing in a field
+window.addEventListener('keydown', (e) => {
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.target.closest && e.target.closest('input, select, textarea')) return;
+  const view = { 1: 'iso', 2: 'top', 3: 'front', f: 'fit', F: 'fit' }[e.key];
+  if (view) {
+    setView(view);
+    e.preventDefault();
+  }
+});
 $('section').addEventListener('change', applySection);
 $('section-pos').addEventListener('input', applySection);
 window.addEventListener('resize', drawProfile);
@@ -809,7 +1041,8 @@ fetch('/api/health')
   .then((info) => {
     if (info.step_support) {
       $('part-upload').accept += ',.step,.stp,.iges,.igs';
-      $('format-list').textContent = 'STL · 3MF · OBJ · STEP · IGES — millimeters';
+      $('format-list').textContent = 'STL · 3MF · OBJ · STEP · IGES';
+      $('drop-hint').textContent = 'Drop STL · 3MF · OBJ · STEP · IGES';
       $('step-opts').classList.remove('hidden');
     } else {
       $('step-note').classList.remove('hidden');
@@ -817,3 +1050,5 @@ fetch('/api/health')
     setStatus(`ready — backend v${info.version}`);
   })
   .catch(() => setStatus('backend unreachable', true));
+
+restoreSettings();

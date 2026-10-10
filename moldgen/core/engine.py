@@ -13,6 +13,7 @@ side as a single-sided tool.
 from __future__ import annotations
 
 import dataclasses
+import logging
 import math
 
 import numpy as np
@@ -21,14 +22,46 @@ import trimesh
 from . import forged, hardware, mfld, prepreg
 from .offset import offset_mesh
 from .types import MoldParams, MoldResult
-from .undercuts import analyze_undercuts, sharp_edge_length_mm
+from .undercuts import PartVisibility, analyze_undercuts, sharp_edge_length_mm
 from .validate import validate_and_repair
 
 VALID_MODES = ("compression", "open_layup", "prepreg")
 VALID_SIDES = ("above", "below")
 
 
-def generate_mold(mesh: trimesh.Trimesh, params: MoldParams) -> MoldResult:
+log = logging.getLogger("moldgen")
+
+
+def generate_mold(
+    mesh: trimesh.Trimesh,
+    params: MoldParams,
+    visibility: PartVisibility | None = None,
+) -> MoldResult:
+    """Build the mold for `mesh`. Never raises: invalid input comes back as
+    `errors`, and an unexpected failure inside the geometry pipeline is
+    logged with its traceback and reported as an internal error, so a
+    caller (the web app, the CLI, a batch script) always gets a MoldResult.
+
+    `visibility` is an optional precomputed PartVisibility for `mesh` (the
+    web app caches one per part); it is only reused when the validated part
+    is triangle-for-triangle the same mesh.
+    """
+    try:
+        return _generate(mesh, params, visibility)
+    except Exception as exc:
+        log.exception("mold generation failed")
+        return MoldResult(
+            ok=False,
+            errors=[
+                f"internal error during mold generation ({type(exc).__name__}: {exc}); "
+                "please report it with the part file and settings"
+            ],
+        )
+
+
+def _generate(
+    mesh: trimesh.Trimesh, params: MoldParams, visibility: PartVisibility | None
+) -> MoldResult:
     warnings: list[str] = []
 
     errors = _check_params(params)
@@ -79,8 +112,7 @@ def generate_mold(mesh: trimesh.Trimesh, params: MoldParams) -> MoldResult:
         )
     if not (bounds[0][2] < z < bounds[1][2]):
         warnings.append(
-            "parting plane does not pass through the part; "
-            "one half will contain the entire cavity"
+            "parting plane does not pass through the part; one half will contain the entire cavity"
         )
 
     part_man = mfld.to_manifold(part)
@@ -95,7 +127,8 @@ def generate_mold(mesh: trimesh.Trimesh, params: MoldParams) -> MoldResult:
 
     demold_meta = None
     if params.demold_check:
-        demold_meta = _demold_warnings(part, z_split, params, warnings)
+        vis = visibility if _same_mesh(visibility, part) else None
+        demold_meta = _demold_warnings(part, z_split, params, warnings, vis)
 
     hardware_meta: dict = {}
     extra_meta: dict = {}
@@ -104,8 +137,13 @@ def generate_mold(mesh: trimesh.Trimesh, params: MoldParams) -> MoldResult:
             warnings.append("trim groove applies only to open-layup tools; ignored")
         try:
             female, male, forged_meta, hardware_meta = forged.build(
-                part_man, bounds, z_split, params, warnings,
-                part_mesh=part, part_centroid_xy=part.center_mass[:2],
+                part_man,
+                bounds,
+                z_split,
+                params,
+                warnings,
+                part_mesh=part,
+                part_centroid_xy=part.center_mass[:2],
             )
         except ValueError as exc:
             return MoldResult(ok=False, errors=[str(exc)], warnings=warnings)
@@ -123,8 +161,7 @@ def generate_mold(mesh: trimesh.Trimesh, params: MoldParams) -> MoldResult:
             )
         if params.trim_groove:
             warnings.append(
-                "prepreg tools get a witness line from the trim-allowance "
-                "kick; trim_groove ignored"
+                "prepreg tools get a witness line from the trim-allowance kick; trim_groove ignored"
             )
         if params.demold_check:
             sharp = sharp_edge_length_mm(part, z_split, params.keep_side)
@@ -202,8 +239,19 @@ def generate_mold(mesh: trimesh.Trimesh, params: MoldParams) -> MoldResult:
     return MoldResult(ok=True, halves=halves, warnings=warnings, metadata=metadata)
 
 
+def _same_mesh(vis: PartVisibility | None, part: trimesh.Trimesh) -> bool:
+    """Whether a cached visibility was computed for exactly this part."""
+    if vis is None or vis.mesh.faces.shape != part.faces.shape:
+        return False
+    return bool(np.array_equal(vis.mesh.triangles, part.triangles))
+
+
 def _demold_warnings(
-    part: trimesh.Trimesh, z_split: float, params: MoldParams, warnings: list[str]
+    part: trimesh.Trimesh,
+    z_split: float,
+    params: MoldParams,
+    warnings: list[str],
+    visibility: PartVisibility | None = None,
 ) -> dict:
     """Warn about geometry that will fight demolding, per half.
 
@@ -216,7 +264,11 @@ def _demold_warnings(
     """
     single = params.mode != "compression"
     report = analyze_undercuts(
-        part, z_split, min_draft_deg=params.min_draft_deg, single_sided=single
+        part,
+        z_split,
+        min_draft_deg=params.min_draft_deg,
+        single_sided=single,
+        visibility=visibility,
     )
     top = report.face_molded_by_top
     if params.mode == "compression":
@@ -287,9 +339,7 @@ def _check_params(p: MoldParams) -> list[str]:
     if p.wall_margin_mm <= 0:
         errors.append(f"wall_margin_mm must be positive, got {p.wall_margin_mm:g}")
     if p.base_thickness_mm < 3:
-        errors.append(
-            f"base_thickness_mm must be at least 3, got {p.base_thickness_mm:g}"
-        )
+        errors.append(f"base_thickness_mm must be at least 3, got {p.base_thickness_mm:g}")
     if p.mode in ("open_layup", "prepreg") and p.keep_side not in VALID_SIDES:
         errors.append(f"keep_side must be one of {VALID_SIDES}, got {p.keep_side!r}")
     if p.mode == "prepreg":
@@ -300,14 +350,14 @@ def _check_params(p: MoldParams) -> list[str]:
         if p.tape_line and p.tape_zone_mm <= 0:
             errors.append("tape_zone_mm must be positive")
         if p.flange_bolt_holes and (
-            p.flange_hole_diameter_mm <= 0
-            or not 20 <= p.flange_hole_spacing_mm <= 300
+            p.flange_hole_diameter_mm <= 0 or not 20 <= p.flange_hole_spacing_mm <= 300
         ):
             errors.append(
-                "flange_hole_diameter_mm must be positive and "
-                "flange_hole_spacing_mm in 20-300"
+                "flange_hole_diameter_mm must be positive and flange_hole_spacing_mm in 20-300"
             )
     if p.mode == "compression":
+        if p.plug_shape not in ("contour", "rect"):
+            errors.append(f"plug_shape must be 'contour' or 'rect', got {p.plug_shape!r}")
         if p.plunge_mm <= 0:
             errors.append(f"plunge_mm must be positive, got {p.plunge_mm:g}")
         if p.plug_border_mm < 2:
@@ -325,9 +375,7 @@ def _check_params(p: MoldParams) -> list[str]:
             or p.overflow_width_mm <= 0
             or p.overflow_depth_mm <= 0
         ):
-            errors.append(
-                "overflow_per_edge must be 1-4 and overflow width/depth positive"
-            )
+            errors.append("overflow_per_edge must be 1-4 and overflow width/depth positive")
         if p.jack_screws:
             if not 1 <= p.jack_screw_count <= 4:
                 errors.append(f"jack_screw_count must be 1-4, got {p.jack_screw_count}")
@@ -383,8 +431,7 @@ def _nudged_parting_height(part: trimesh.Trimesh, z: float, warnings: list[str])
         if not coplanar(z_out).any():
             break
     warnings.append(
-        f"parting plane coincides with flat part facets; "
-        f"split nudged to z={z_out:.6g} mm"
+        f"parting plane coincides with flat part facets; split nudged to z={z_out:.6g} mm"
     )
     return z_out
 

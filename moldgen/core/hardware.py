@@ -17,7 +17,9 @@ from __future__ import annotations
 import math
 
 import numpy as np
-from manifold3d import Manifold
+from manifold3d import CrossSection, Manifold
+
+from . import mfld
 
 CIRCULAR_SEGMENTS = 64
 MIN_PIN_RADIUS = 1.5  # below this a pin is structurally useless; skip instead
@@ -84,19 +86,23 @@ def registration_pins(block_min, block_max, z_plane, inset, params, warnings):
 
     pegs, holes = [], []
     for x, y in corners:
-        shaft = Manifold.cylinder(
-            PEG_EMBED + h - c, r, r, CIRCULAR_SEGMENTS
-        ).translate((x, y, z_plane - PEG_EMBED))
+        shaft = Manifold.cylinder(PEG_EMBED + h - c, r, r, CIRCULAR_SEGMENTS).translate(
+            (x, y, z_plane - PEG_EMBED)
+        )
         if c > 0:
             chamfer = Manifold.cylinder(c, r, r - c, CIRCULAR_SEGMENTS).translate(
                 (x, y, z_plane + h - c)
             )
-            pegs.append(shaft + chamfer)
+            # one convex solid: a union of shaft and cone leaves a float-noise
+            # seam where the cone's base should coincide with the shaft top
+            pegs.append(Manifold.batch_hull([shaft, chamfer]))
         else:
             pegs.append(shaft)
         holes.append(
             Manifold.cylinder(
-                PEG_EMBED + h + HOLE_OVERDEPTH, r + clearance, r + clearance,
+                PEG_EMBED + h + HOLE_OVERDEPTH,
+                r + clearance,
+                r + clearance,
                 CIRCULAR_SEGMENTS,
             ).translate((x, y, z_plane - PEG_EMBED))
         )
@@ -122,8 +128,7 @@ def bolt_holes(block_min, block_max, inset, params, pin_info, warnings):
     r = params.bolt_diameter_mm / 2.0 + BOLT_RADIAL_CLEARANCE
     if r > inset - RING_CLEARANCE:
         warnings.append(
-            f"flange band too narrow for {params.bolt_diameter_mm:g} mm "
-            "bolt holes; bolts skipped"
+            f"flange band too narrow for {params.bolt_diameter_mm:g} mm bolt holes; bolts skipped"
         )
         return None, None
 
@@ -139,7 +144,7 @@ def bolt_holes(block_min, block_max, inset, params, pin_info, warnings):
 
     kept = []
     max_gap = 0.0
-    for (a, b), k in zip(edges, per_edge):
+    for (a, b), k in zip(edges, per_edge, strict=True):
         if k == 0:
             continue
         length = math.hypot(b[0] - a[0], b[1] - a[1])
@@ -149,10 +154,7 @@ def bolt_holes(block_min, block_max, inset, params, pin_info, warnings):
             x, y = a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])
             if pin_info is not None:
                 min_gap = r + pin_info["radius"] + pin_info["clearance"] + 1.0
-                if any(
-                    math.hypot(x - px, y - py) < min_gap
-                    for px, py in pin_info["centers"]
-                ):
+                if any(math.hypot(x - px, y - py) < min_gap for px, py in pin_info["centers"]):
                     warnings.append(
                         f"bolt hole at ({x:.1f}, {y:.1f}) too close to a "
                         "registration pin; that hole skipped"
@@ -170,8 +172,7 @@ def bolt_holes(block_min, block_max, inset, params, pin_info, warnings):
     z0 = float(block_min[2]) - 1.0
     height = float(block_max[2] - block_min[2]) + 2.0
     cylinders = [
-        Manifold.cylinder(height, r, r, CIRCULAR_SEGMENTS).translate((x, y, z0))
-        for x, y in kept
+        Manifold.cylinder(height, r, r, CIRCULAR_SEGMENTS).translate((x, y, z0)) for x, y in kept
     ]
     info = {
         "centers": [[float(x), float(y)] for x, y in kept],
@@ -223,8 +224,7 @@ def jack_screw_holes(block_min, block_max, inset, params, avoid, warnings):
     z0 = float(block_min[2])  # generous span; only the male plate intersects it
     height = float(block_max[2] - block_min[2]) + 2.0
     holes = [
-        Manifold.cylinder(height, r, r, CIRCULAR_SEGMENTS).translate((x, y, z0))
-        for x, y in kept
+        Manifold.cylinder(height, r, r, CIRCULAR_SEGMENTS).translate((x, y, z0)) for x, y in kept
     ]
     info = {
         "centers": [[float(x), float(y)] for x, y in kept],
@@ -234,6 +234,12 @@ def jack_screw_holes(block_min, block_max, inset, params, avoid, warnings):
     return _union(holes), info
 
 
+# The ejector pin usually sits on the axis of a revolved part, whose
+# meridian edges lie at regular angles — as do a cylinder's. Edges in the
+# same vertical plane intersect edge-on-edge, which booleans resolve with
+# coincident duplicate vertices (non-manifold once a slicer welds the STL).
+# Rotating the pin's tessellation by an angle no regular n-gon uses avoids it.
+PIN_PHASE_DEG = 1.7320508  # √3°: irrational, never a multiple of 360/n
 EJECTOR_OVERSHOOT = 0.3  # how far the hole pokes past the cavity surface
 EJECTOR_MIN_WALL = 1.0  # part material required above the pin face
 
@@ -260,7 +266,10 @@ def ejector_hole(block_min, part_mesh, z_split, params, warnings, preferred_xy=N
     z_floor = float(part_mesh.bounds[0][2]) - 1.0
     ring = np.array(
         [[0.0, 0.0]]
-        + [[math.cos(a) * r, math.sin(a) * r] for a in np.linspace(0, 2 * math.pi, 12, endpoint=False)]
+        + [
+            [math.cos(a) * r, math.sin(a) * r]
+            for a in np.linspace(0, 2 * math.pi, 12, endpoint=False)
+        ]
     )
 
     def landing(xy):
@@ -284,20 +293,18 @@ def ejector_hole(block_min, part_mesh, z_split, params, warnings, preferred_xy=N
         preferred_xy if preferred_xy is not None else part_mesh.bounds.mean(axis=0)[:2],
         dtype=float,
     )
-    candidates = [center]
-    # fallbacks: centroids of downward-facing faces, nearest first
-    down = part_mesh.face_normals[:, 2] < -0.5
-    if down.any():
-        cxy = part_mesh.triangles_center[down][:, :2]
-        order = np.argsort(np.linalg.norm(cxy - center, axis=1))
-        candidates += list(cxy[order[:400]])
+    candidates = [center] + _ejector_fallbacks(part_mesh, center, r)
 
     for xy in candidates:
         top = landing(xy)
         if top is not None:
             x, y = float(xy[0]), float(xy[1])
             z0 = float(block_min[2]) - 1.0
-            hole = Manifold.cylinder(top - z0, r, r, CIRCULAR_SEGMENTS).translate((x, y, z0))
+            hole = (
+                Manifold.cylinder(top - z0, r, r, CIRCULAR_SEGMENTS)
+                .rotate((0.0, 0.0, PIN_PHASE_DEG))
+                .translate((x, y, z0))
+            )
             if np.linalg.norm(np.asarray(xy) - center) > 1e-6:
                 warnings.append(
                     f"ejector hole moved to ({x:.1f}, {y:.1f}) — the part has "
@@ -309,10 +316,36 @@ def ejector_hole(block_min, part_mesh, z_split, params, warnings, preferred_xy=N
             )
             return hole, {"center": [x, y], "radius": float(r), "top_z": top}
     warnings.append(
-        f"no spot on the part's underside fits a {2 * r:g} mm ejector pin; "
-        "ejector hole skipped"
+        f"no spot on the part's underside fits a {2 * r:g} mm ejector pin; ejector hole skipped"
     )
     return None, None
+
+
+def _ejector_fallbacks(part_mesh, center, r, limit=400):
+    """Candidate pin centers when the centroid doesn't work: centroids of
+    flat-ish downward faces (flattest tier first), thinned to one per
+    pin-radius grid cell and ordered nearest-first. Without the thinning,
+    a dense mesh's nearest few hundred faces can all sit on one steep rim
+    where no pin lands, and the flat underside is never tried."""
+    out = []
+    normal_z = part_mesh.face_normals[:, 2]
+    centers = part_mesh.triangles_center[:, :2]
+    seen: set = set()
+    for flat in (-0.9, -0.5):
+        cxy = centers[normal_z < flat]
+        if len(cxy) == 0:
+            continue
+        order = np.argsort(np.linalg.norm(cxy - center, axis=1))
+        cells = np.floor(cxy[order] / max(r, 1e-3)).astype(np.int64)
+        _, first = np.unique(cells, axis=0, return_index=True)
+        for i in np.sort(first):  # nearest-first within this tier
+            key = tuple(cells[i])
+            if key not in seen:
+                seen.add(key)
+                out.append(cxy[order[i]])
+            if len(out) >= limit:
+                return out
+    return out
 
 
 def pry_slot_solids(block_min, block_max, z_flange, params, avoid, warnings):
@@ -346,7 +379,10 @@ def pry_slot_solids(block_min, block_max, z_flange, params, avoid, warnings):
             ok = True
             for ax, ay, ar in avoid:
                 along, across = (ax, ay) if axis == "x" else (ay, ax)
-                if abs(c - along) < width / 2.0 + ar + 1.5 and n_lo - ar - 1.5 <= across <= n_hi + ar + 1.5:
+                if (
+                    abs(c - along) < width / 2.0 + ar + 1.5
+                    and n_lo - ar - 1.5 <= across <= n_hi + ar + 1.5
+                ):
                     ok = False
                     break
             if ok:
@@ -429,7 +465,14 @@ _SLIDES = (0.0, 0.04, -0.04, 0.08, -0.08, 0.12, -0.12, 0.16, -0.16, 0.22, -0.22)
 
 
 def overflow_channel_solids(
-    block_min, block_max, z_flange, pocket_rect, params, avoid, warnings
+    block_min,
+    block_max,
+    z_flange,
+    pocket_rect,
+    params,
+    avoid,
+    warnings,
+    run_inward=False,
 ):
     """Resin overflow channels on the female flange face.
 
@@ -441,6 +484,9 @@ def overflow_channel_solids(
     slot slides along the edge to the nearest clear spot, and is only
     skipped (with a warning) when none exists. Subtract the result from the
     FEMALE half only.
+    `run_inward` extends each channel past the rectangle to the pocket
+    center — for contoured pockets, whose wall lies inside `pocket_rect`;
+    the caller then clips the inner end to the actual pocket outline.
     """
     w = params.overflow_width_mm
     d = params.overflow_depth_mm
@@ -481,6 +527,8 @@ def overflow_channel_solids(
                 skipped += 1
                 continue
             placed.append(spot)
+            if run_inward:
+                inner = (qy0 + qy1) / 2.0 if axis == "x" else (qx0 + qx1) / 2.0
             lo, hi = min(inner, outer), max(inner, outer)
             if axis == "x":
                 solid = Manifold.cube((w, hi - lo + 2.0, d + 1.0)).translate(
@@ -512,20 +560,20 @@ def overflow_channel_solids(
 def _v_groove_rect(x0, y0, x1, y1, z, depth):
     """Rectangular V-groove (scribe) loop cut into a flat face at height z.
 
-    Built from four square prisms rotated 45° about their long axis: the
-    diamond cross-section reads as a `depth`-deep, 90°-included V where it
-    crosses the face.
+    A 90°-included V of `depth` centered on the rectangle's outline, built
+    as one solid: a frustum whose walls lean OUT from the outline at the
+    apex minus one whose walls lean IN, both exact offsets. (Four crossing
+    diamond prisms, the obvious construction, meet at single points at the
+    corners — invisible in memory, non-manifold once a slicer welds the
+    STL.) Both extend `overshoot` above the face for a clean boolean.
     """
-    cx, cy = (x0 + x1) / 2.0, (y0 + y1) / 2.0
-    s = depth * math.sqrt(2.0)  # square side whose half-diagonal equals depth
-    lx = (x1 - x0) + 2.0 * depth  # run past the corners so the loop closes
-    ly = (y1 - y0) + 2.0 * depth
-    return _union([
-        Manifold.cube((lx, s, s), True).rotate((45.0, 0.0, 0.0)).translate((cx, y0, z)),
-        Manifold.cube((lx, s, s), True).rotate((45.0, 0.0, 0.0)).translate((cx, y1, z)),
-        Manifold.cube((s, ly, s), True).rotate((0.0, 45.0, 0.0)).translate((x0, cy, z)),
-        Manifold.cube((s, ly, s), True).rotate((0.0, 45.0, 0.0)).translate((x1, cy, z)),
-    ])
+    overshoot = max(depth, 0.5)
+    height = depth + overshoot
+    path = CrossSection([[(x0, y0), (x1, y0), (x1, y1), (x0, y1)]])
+    z_apex = z - depth
+    outer = mfld.drafted_extrude(path, height, height).translate((0.0, 0.0, z_apex))
+    inner = mfld.drafted_extrude(path, height, -height).translate((0.0, 0.0, z_apex))
+    return outer - inner
 
 
 def trim_groove_solid(part_bounds, block_min, block_max, z_split, params, warnings):
@@ -571,8 +619,7 @@ def tape_line_solid(block_min, block_max, part_bounds, z_face, params, warnings)
     (px0, py0, _), (px1, py1, _) = part_bounds
     if x0 > px0 - RING_CLEARANCE or y0 > py0 - RING_CLEARANCE:
         warnings.append(
-            f"flange too narrow for a {tz:g} mm tape zone scribe; skipped "
-            "(increase wall_margin_mm)"
+            f"flange too narrow for a {tz:g} mm tape zone scribe; skipped (increase wall_margin_mm)"
         )
         return None, None
     info = {
