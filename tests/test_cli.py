@@ -75,3 +75,49 @@ def test_errors_are_reported_not_raised(mushroom, tmp_path, capsys):
     with pytest.raises(SystemExit) as exc:
         main(["generate", str(mushroom), "--mode", "nope"])
     assert exc.value.code == 2
+
+
+def _windows_like(tmp_path, *args, io_encoding="cp1252"):
+    """Run the CLI the way Windows does by default: stdout in the legacy
+    code page, and any file I/O that doesn't name an encoding is an error
+    (on Windows it would silently use cp1252 and choke on ≈, ≥, −)."""
+    import os
+    import subprocess
+    import sys
+
+    env = dict(os.environ, PYTHONIOENCODING=f"{io_encoding}:strict", PYTHONUTF8="0")
+    return subprocess.run(
+        [
+            sys.executable,
+            "-X",
+            "warn_default_encoding",
+            "-W",
+            "error::EncodingWarning",
+            "-m",
+            "moldgen",
+            *args,
+        ],
+        capture_output=True,
+        env=env,
+        cwd=tmp_path,
+    )
+
+
+def test_generate_on_windows_like_encodings(mushroom, tmp_path):
+    # regression: the v0.2.0 Windows build crashed writing the setup sheet
+    out = tmp_path / "out"
+    proc = _windows_like(tmp_path, "generate", str(mushroom), "--out", str(out))
+    assert proc.returncode == 0, proc.stderr.decode("cp1252", "replace")
+    sheet = (out / "moldgen-setup.txt").read_text(encoding="utf-8")
+    assert "≈" in sheet  # written as UTF-8, not mangled
+
+
+def test_output_survives_legacy_code_page(mushroom, tmp_path):
+    # stdout on a redirected Windows console is cp1252: printing a path it
+    # can't encode used to abort the run (stderr is always forgiving in
+    # Python, stdout is not). It must print a replacement character instead.
+    out = tmp_path / "模具"  # not representable in cp1252
+    proc = _windows_like(tmp_path, "generate", str(mushroom), "--out", str(out))
+    assert proc.returncode == 0, proc.stderr.decode("cp1252", "replace")
+    assert "wrote" in proc.stdout.decode("cp1252")
+    assert (out / "moldgen-female.stl").is_file()

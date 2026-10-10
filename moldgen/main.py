@@ -250,7 +250,7 @@ async def upload(
         "linear_deflection_mm": linear_deflection_mm,
         "angular_deflection_deg": angular_deflection_deg,
     }
-    (mesh_dir / "upload.json").write_text(json.dumps(upload_meta))
+    (mesh_dir / "upload.json").write_text(json.dumps(upload_meta), encoding="utf-8")
     try:
         mesh = _load_original(mesh_dir)
     except Exception as exc:
@@ -268,7 +268,7 @@ def _load_original(mesh_dir: Path) -> trimesh.Trimesh:
     at upload (settings from upload.json)."""
     original = next(mesh_dir.glob("original.*"))
     meta_path = mesh_dir / "upload.json"
-    meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
+    meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
     mesh = load_part(
         original,
         **{k: meta[k] for k in ("linear_deflection_mm", "angular_deflection_deg") if k in meta},
@@ -424,8 +424,10 @@ def generate(req: GenerateRequest) -> dict:  # type: ignore[valid-type]
                 "metadata": result.metadata,
             },
             indent=2,
-        )
+        ),
+        encoding="utf-8",
     )
+
     return {
         "ok": True,
         "warnings": result.warnings,
@@ -442,7 +444,7 @@ def download_bundle(mesh_id: str) -> Response:
     record_path = part_dir / "mold.json"
     if not record_path.exists():
         raise HTTPException(status_code=404, detail="not generated yet")
-    record = json.loads(record_path.read_text())
+    record = json.loads(record_path.read_text(encoding="utf-8"))
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for name in record["metadata"]["halves"]:
