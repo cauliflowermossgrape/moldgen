@@ -9,11 +9,15 @@ map 1:1 onto the triangles the viewer renders).
 
 from __future__ import annotations
 
+import base64
 import dataclasses
 import io
 import json
+import logging
+import os
 import re
 import shutil
+import sys
 import threading
 import time
 import typing
@@ -37,14 +41,42 @@ from moldgen.core import (
     analyze_undercuts,
     export_stl,
     generate_mold,
+    step_io,
 )
-from moldgen.core import step_io
 from moldgen.core.io import load_part, supported_suffixes
-from moldgen.core.undercuts import PartVisibility, parting_profile, suggest_parting_plane
+from moldgen.core.report import setup_sheet
+from moldgen.core.undercuts import PartVisibility, parting_summary
 
-ROOT = Path(__file__).resolve().parent.parent
-FRONTEND_DIR = ROOT / "frontend"
-WORKDIR = ROOT / "workdir"
+PACKAGE_DIR = Path(__file__).resolve().parent
+ROOT = PACKAGE_DIR.parent
+
+
+def _user_data_dir() -> Path:
+    """Per-user application data directory, following each OS's convention."""
+    if sys.platform == "win32":
+        base = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
+    elif sys.platform == "darwin":
+        base = Path.home() / "Library" / "Application Support"
+    else:
+        base = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
+    return base / "moldgen"
+
+
+def _default_workdir() -> Path:
+    """Where uploads and generated molds live: $MOLDGEN_WORKDIR if set,
+    ./workdir in a source checkout (the dev workflow), otherwise the
+    per-user data directory — an installed package or a packaged app must
+    never write inside its own (often read-only) install location."""
+    env = os.environ.get("MOLDGEN_WORKDIR")
+    if env:
+        return Path(env).expanduser()
+    if (ROOT / "pyproject.toml").is_file():
+        return ROOT / "workdir"
+    return _user_data_dir() / "workdir"
+
+
+FRONTEND_DIR = Path(os.environ.get("MOLDGEN_FRONTEND") or PACKAGE_DIR / "frontend")
+WORKDIR = _default_workdir()
 
 MESH_ID_RE = re.compile(r"^[0-9a-f]{12}$")
 DOWNLOADABLE = {"part", "female", "male", "tool"}
@@ -52,8 +84,23 @@ MAX_UPLOAD_BYTES = 256 * 1024 * 1024
 RETENTION_SECONDS = 7 * 24 * 3600  # uploads untouched this long are pruned
 PROFILE_SAMPLES = 60
 NO_STORE = {"Cache-Control": "no-store"}
+# upload units → millimeters (everything downstream is mm)
+UNIT_SCALE = {"mm": 1.0, "cm": 10.0, "m": 1000.0, "in": 25.4}
+
+log = logging.getLogger("moldgen")
 
 app = FastAPI(title="moldgen", version=__version__)
+
+
+@app.exception_handler(Exception)
+async def _internal_error(_: Request, exc: Exception) -> JSONResponse:
+    """Unexpected failures come back as JSON the UI can show, with the
+    traceback in the server log — never an opaque HTML 500."""
+    log.exception("unhandled error")
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"internal error ({type(exc).__name__}: {exc})"},
+    )
 
 
 @app.exception_handler(RequestValidationError)
@@ -162,8 +209,11 @@ async def upload(
     file: UploadFile,
     linear_deflection_mm: float = Form(step_io.DEFAULT_LINEAR_DEFLECTION_MM),
     angular_deflection_deg: float = Form(step_io.DEFAULT_ANGULAR_DEFLECTION_DEG),
+    units: str = Form("mm"),
 ) -> dict:
     suffix = Path(file.filename or "").suffix.lower()
+    if units not in UNIT_SCALE:
+        raise HTTPException(status_code=400, detail=f"units must be one of {', '.join(UNIT_SCALE)}")
     if suffix not in supported_suffixes():
         if suffix in step_io.CAD_SUFFIXES:
             raise HTTPException(status_code=400, detail=step_io.INSTALL_HINT)
@@ -194,21 +244,39 @@ async def upload(
                     detail=f"file is larger than {MAX_UPLOAD_BYTES >> 20} MB",
                 )
             out.write(chunk)
-    deflection = {
+    upload_meta = {
+        "filename": file.filename,
+        "units": units,
         "linear_deflection_mm": linear_deflection_mm,
         "angular_deflection_deg": angular_deflection_deg,
     }
+    (mesh_dir / "upload.json").write_text(json.dumps(upload_meta))
     try:
-        mesh = load_part(original, **deflection)
+        mesh = _load_original(mesh_dir)
     except Exception as exc:
         shutil.rmtree(mesh_dir, ignore_errors=True)
-        raise HTTPException(status_code=400, detail=f"could not read {file.filename}: {exc}")
-    (mesh_dir / "upload.json").write_text(
-        json.dumps({"filename": file.filename, **deflection})
-    )
+        raise HTTPException(
+            status_code=400, detail=f"could not read {file.filename}: {exc}"
+        ) from exc
     export_stl(mesh, mesh_dir / "part.stl")
     mesh = trimesh.load(mesh_dir / "part.stl")  # canonical face order from here on
     return {"filename": file.filename, **_part_stats(mesh_id, mesh)}
+
+
+def _load_original(mesh_dir: Path) -> trimesh.Trimesh:
+    """The as-uploaded part, tessellated and scaled to mm exactly as it was
+    at upload (settings from upload.json)."""
+    original = next(mesh_dir.glob("original.*"))
+    meta_path = mesh_dir / "upload.json"
+    meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
+    mesh = load_part(
+        original,
+        **{k: meta[k] for k in ("linear_deflection_mm", "angular_deflection_deg") if k in meta},
+    )
+    scale = UNIT_SCALE.get(meta.get("units", "mm"), 1.0)
+    if scale != 1.0:
+        mesh.apply_scale(scale)
+    return mesh
 
 
 def _part_stats(mesh_id: str, mesh: trimesh.Trimesh) -> dict:
@@ -226,14 +294,8 @@ def _part_stats(mesh_id: str, mesh: trimesh.Trimesh) -> dict:
     if not mesh.is_watertight:
         warnings.append("mesh is not watertight; repair will be attempted during generation")
 
-    vis = _visibility(mesh_id, mesh)
-    two = parting_profile(mesh, PROFILE_SAMPLES, visibility=vis)
-    single = parting_profile(mesh, PROFILE_SAMPLES, single_sided=True, visibility=vis)
-    suggested = {
-        "two_part": suggest_parting_plane(mesh, visibility=vis),
-        "below": suggest_parting_plane(mesh, side="below", visibility=vis),
-        "above": suggest_parting_plane(mesh, side="above", visibility=vis),
-    }
+    summary = parting_summary(mesh, PROFILE_SAMPLES, visibility=_visibility(mesh_id, mesh))
+    suggested = summary["suggested"]
     return {
         "mesh_id": mesh_id,
         "triangles": int(len(mesh.faces)),
@@ -243,12 +305,7 @@ def _part_stats(mesh_id: str, mesh: trimesh.Trimesh) -> dict:
         "volume_mm3": float(mesh.volume) if mesh.is_volume else None,
         "suggested_parting_z_mm": suggested["two_part"],
         "suggested": suggested,
-        "parting_profile": {
-            "z": two.z.tolist(),
-            "two_part": (two.bottom_mm2 + two.top_mm2).tolist(),
-            "below": single.bottom_mm2.tolist(),
-            "above": single.top_mm2.tolist(),
-        },
+        "parting_profile": summary["profile"],
         "warnings": warnings,
         "mesh_url": f"/api/download/{mesh_id}/part.stl",
     }
@@ -266,19 +323,9 @@ def orient(req: OrientRequest) -> dict:
     """
     part_path = _part_path(req.mesh_id)
     if req.reset:
-        original = next(part_path.parent.glob("original.*"), None)
-        if original is None:
+        if next(part_path.parent.glob("original.*"), None) is None:
             raise HTTPException(status_code=404, detail="original upload not found")
-        meta_path = part_path.parent / "upload.json"
-        deflection = {}
-        if meta_path.exists():
-            meta = json.loads(meta_path.read_text())
-            deflection = {
-                k: meta[k]
-                for k in ("linear_deflection_mm", "angular_deflection_deg")
-                if k in meta
-            }
-        mesh = load_part(original, **deflection)
+        mesh = _load_original(part_path.parent)
     else:
         if req.down is None or len(req.down) != 3:
             raise HTTPException(status_code=400, detail="down must be a 3-vector")
@@ -287,9 +334,7 @@ def orient(req: OrientRequest) -> dict:
         if norm < 1e-9:
             raise HTTPException(status_code=400, detail="down must be non-zero")
         mesh = trimesh.load(part_path)
-        mesh.apply_transform(
-            trimesh.geometry.align_vectors(down / norm, [0.0, 0.0, -1.0])
-        )
+        mesh.apply_transform(trimesh.geometry.align_vectors(down / norm, [0.0, 0.0, -1.0]))
         center = mesh.bounds.mean(axis=0)
         mesh.apply_translation([-center[0], -center[1], -mesh.bounds[0][2]])
     export_stl(mesh, part_path)
@@ -330,17 +375,31 @@ def analyze(req: AnalyzeRequest) -> dict:
         "low_draft_faces": np.flatnonzero(report.face_is_low_draft).tolist(),
         "occluded_faces": np.flatnonzero(report.face_is_occluded).tolist(),
         "core_faces": np.flatnonzero(report.face_is_core).tolist(),
+        "draft_deg_b64": encode_draft(report.face_draft_deg),
         "undercut_area_mm2": report.undercut_area_mm2,
         "bottom": half(report.bottom),
         "top": half(report.top),
     }
 
 
+DRAFT_UNMOLDED = -128  # int8 sentinel in draft_deg_b64
+
+
+def encode_draft(draft_deg: np.ndarray) -> str:
+    """Per-face signed draft angles as base64 int8 (whole degrees, -90..90;
+    DRAFT_UNMOLDED where no half molds the face) — 1 byte per triangle, so
+    even million-triangle parts stay a small response."""
+    out = np.full(len(draft_deg), DRAFT_UNMOLDED, dtype=np.int8)
+    ok = np.isfinite(draft_deg)
+    out[ok] = np.clip(np.rint(draft_deg[ok]), -90, 90).astype(np.int8)
+    return base64.b64encode(out.tobytes()).decode("ascii")
+
+
 @app.post("/api/generate")
 def generate(req: GenerateRequest) -> dict:  # type: ignore[valid-type]
     mesh = _load_mesh(req.mesh_id)
     params = MoldParams(**req.model_dump(exclude={"mesh_id"}))
-    result = generate_mold(mesh, params)
+    result = generate_mold(mesh, params, visibility=_visibility(req.mesh_id, mesh))
     if not result.ok:
         return {"ok": False, "errors": result.errors, "warnings": result.warnings}
 
@@ -353,6 +412,7 @@ def generate(req: GenerateRequest) -> dict:  # type: ignore[valid-type]
         export_stl(half, mesh_dir / f"{name}.stl")
         halves[name] = {
             "url": f"/api/download/{req.mesh_id}/{name}.stl?v={stamp}",
+            "url_3mf": f"/api/download/{req.mesh_id}/{name}.3mf?v={stamp}",
             **result.metadata["halves"][name],
         }
     (mesh_dir / "mold.json").write_text(
@@ -401,100 +461,40 @@ def download_bundle(mesh_id: str) -> Response:
     )
 
 
-def setup_sheet(record: dict) -> str:
-    """Human-readable build notes for the generated mold."""
-    p = record["params"]
-    meta = record["metadata"]
-    hw = meta.get("hardware", {})
-    lines = [
-        f"moldgen {record.get('version', '')} — mold setup sheet",
-        "=" * 48,
-        "",
-        f"Mode:           {p['mode']}",
-        f"Parting plane:  z = {meta['parting_z_mm']:.3f} mm (part frame)",
-        f"Wall margin:    {p['wall_margin_mm']:g} mm   base: {p['base_thickness_mm']:g} mm",
-    ]
-    if p.get("shrink_comp_pct"):
-        lines.append(f"Shrink comp.:   +{p['shrink_comp_pct']:g} % cavity scale")
-    if p.get("cavity_offset_mm"):
-        lines.append(f"Cavity offset:  {p['cavity_offset_mm']:g} mm")
-    lines += ["", "Files:"]
-    for name, h in meta["halves"].items():
-        lines.append(
-            f"  moldgen-{name}.stl  {h['volume'] / 1000:.0f} cm³, "
-            f"{h['triangles']:,} triangles"
-        )
-    forged = meta.get("forged")
-    if forged:
-        ch = forged.get("charge", {})
-        lines += [
-            "",
-            "Compression (forged carbon):",
-            f"  plunge {forged['plunge_mm']:g} mm, pinch gap "
-            f"{forged['pocket_clearance_mm']:g} mm/side, wall draft {forged['draft_deg']:g}°",
-        ]
-        if ch:
-            lines += [
-                f"  part volume {ch['part_volume_cm3']:.1f} cm³ — forged part "
-                f"≈ {ch['est_part_mass_g']:.0f} g at 1.5 g/cm³; weigh the charge "
-                "to that plus a few % for flash",
-                f"  loading volume {ch['loading_volume_cm3']:.1f} cm³ "
-                f"({ch['loading_ratio']:.1f}x the part)",
-            ]
-        cores = forged.get("cores", {})
-        if cores.get("to_male") or cores.get("to_female"):
-            lines.append("  shell part: internal core(s) built onto the opposite half")
-    if "pins" in hw:
-        lines.append(
-            f"  registration pins: 4x Ø{2 * hw['pins']['radius']:.1f} mm, "
-            f"{hw['pins']['clearance']:g} mm clearance"
-        )
-    if "bolts" in hw:
-        lines.append(
-            f"  clamping bolts: {len(hw['bolts']['centers'])}x "
-            f"M{hw['bolts']['bolt_diameter']:g} through both halves"
-        )
-    if "jack_screws" in hw:
-        lines.append(
-            f"  jack screws: {len(hw['jack_screws']['centers'])}x "
-            f"M{hw['jack_screws']['bolt_diameter']:g} (tap-size holes in the male)"
-        )
-    if "ejector" in hw:
-        lines.append("  ejector hole: plug with wax/tape before loading")
-    pre = meta.get("prepreg")
-    if pre:
-        lines += [
-            "",
-            "Laminating tool:",
-            f"  trim allowance {pre['trim_allowance_mm']:g} mm with a "
-            f"{pre['trim_kick_deg']:g}° kick — trim to the witness line",
-        ]
-        lines += [f"  - {n}" for n in pre.get("notes", [])]
-    if record.get("warnings"):
-        lines += ["", "Warnings:"] + [f"  - {w}" for w in record["warnings"]]
-    lines += [
-        "",
-        "General: seal printed tools, apply release agent (several coats of",
-        "wax or a semi-permanent release) and do a test closure before the",
-        "first real charge.",
-        "",
-    ]
-    return "\n".join(lines)
-
-
-@app.get("/api/download/{mesh_id}/{name}.stl")
-def download(mesh_id: str, name: str) -> FileResponse:
+def _half_path(mesh_id: str, name: str) -> Path:
     _part_path(mesh_id)  # validates the id and that the upload exists
     if name not in DOWNLOADABLE:
         raise HTTPException(status_code=404, detail="unknown file")
     path = WORKDIR / mesh_id / f"{name}.stl"
     if not path.exists():
         raise HTTPException(status_code=404, detail="not generated yet")
+    return path
+
+
+@app.get("/api/download/{mesh_id}/{name}.stl")
+def download(mesh_id: str, name: str) -> FileResponse:
+    path = _half_path(mesh_id, name)
     # the same URL is rewritten by re-orienting / regenerating: never cache
     return FileResponse(
         path, media_type="model/stl", filename=f"moldgen-{name}.stl", headers=NO_STORE
     )
 
 
-WORKDIR.mkdir(exist_ok=True)
+@app.get("/api/download/{mesh_id}/{name}.3mf")
+def download_3mf(mesh_id: str, name: str) -> Response:
+    """The same half as 3MF: units are explicit (millimeters) in the file,
+    so slicers never guess the scale, and it's smaller than binary STL."""
+    mesh = trimesh.load(_half_path(mesh_id, name))
+    data = trimesh.exchange.threemf.export_3MF(mesh)
+    return Response(
+        data,
+        media_type="model/3mf",
+        headers={
+            "Content-Disposition": f'attachment; filename="moldgen-{name}.3mf"',
+            **NO_STORE,
+        },
+    )
+
+
+WORKDIR.mkdir(parents=True, exist_ok=True)
 app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")

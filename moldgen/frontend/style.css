@@ -632,3 +632,175 @@ button {
     opacity: 0.35;
   }
 }
+
+/* --- viewport overlays -------------------------------------------------------- */
+
+#legend {
+  flex-wrap: wrap;
+  right: 200px;
+}
+
+#view-tools {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  display: flex;
+  gap: 4px;
+  z-index: 4;
+}
+
+.vt {
+  padding: 5px 10px;
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 500;
+  color: var(--text-dim);
+  background: rgba(21, 25, 32, 0.82);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+  transition: color 0.12s, border-color 0.12s;
+}
+
+.vt:hover,
+.vt:focus-visible {
+  color: var(--text);
+  border-color: var(--accent);
+  outline: none;
+}
+
+#draft-legend {
+  position: absolute;
+  left: 14px;
+  bottom: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  font-size: 0.74rem;
+  color: var(--text-dim);
+  background: rgba(21, 25, 32, 0.82);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  z-index: 4;
+}
+
+#draft-legend .ramp {
+  display: inline-block;
+  width: 140px;
+  height: 10px;
+  border-radius: 3px;
+  /* matches draftColor() in main.js: red < 0° < amber < min draft < green */
+  background: linear-gradient(90deg, #f23b33 0%, #f23b33 22%, #fab73f 25%, #fab73f 50%, #3fae6b 52%, #8ef0b0 100%);
+}
+
+.sw-unmolded {
+  background: #6b7380;
+}
+
+#busy {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  font-size: 0.9rem;
+  color: var(--text);
+  background: rgba(15, 17, 21, 0.45);
+  z-index: 6;
+  pointer-events: none;
+}
+
+.spinner {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 3px solid var(--border-strong);
+  border-top-color: var(--accent);
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.settings-row {
+  margin: 4px 4px 0;
+  font-size: 0.74rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner,
+  #status.busy #status-dot {
+    animation: none;
+  }
+}
+
+/* --- narrow screens: viewport on top, settings scroll below --------------- */
+
+@media (max-width: 760px) {
+  html,
+  body,
+  #app {
+    height: auto;
+    overflow: visible;
+  }
+
+  #app {
+    flex-direction: column;
+  }
+
+  #viewport {
+    height: 55vh;
+    flex: none;
+  }
+
+  #sidebar {
+    width: 100%;
+    border-left: none;
+    border-top: 1px solid var(--border);
+    overflow: visible;
+  }
+
+  #legend {
+    right: 14px;
+    top: 52px;
+  }
+}
+
+.dl-row {
+  display: flex;
+  gap: 6px;
+}
+
+.dl-row + .dl-row {
+  margin-top: 6px;
+}
+
+.dl-row .dl {
+  flex: 1;
+  min-width: 0;
+}
+
+.dl-alt {
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-decoration: none;
+  background: var(--input-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  transition: border-color 0.12s, color 0.12s;
+}
+
+.dl-alt:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}

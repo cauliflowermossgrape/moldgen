@@ -32,7 +32,7 @@ Use a non-default port (8765) — the user may have `make dev` running on 8000.
 ## Frontend
 
 Static files served by the same server at `/`. `node --input-type=module
---check < frontend/main.js` catches syntax errors. For a real check, drive
+--check < moldgen/frontend/main.js` catches syntax errors. For a real check, drive
 it headless: node Playwright lives at `/opt/node-tools/node_modules/playwright`
 and Chromium at `/opt/pw-browsers/chromium-*/chrome-linux/chrome` (launch
 with `--use-gl=swiftshader --enable-unsafe-swiftshader` for WebGL). The
@@ -54,3 +54,15 @@ click `#analyze` / `#generate`, read `#status-text`, take screenshots.
   `dpkg-deb -x` them into `~/.local/opt/gl`, then run server/tests with
   `LD_LIBRARY_PATH=$HOME/.local/opt/gl/usr/lib/x86_64-linux-gnu`. Without it
   cadquery import fails and moldgen correctly degrades to mesh-only.
+
+## Beyond the happy path
+
+- CLI: `moldgen generate part.stl --out DIR` / `moldgen analyze part.stl`
+  (exit 1 = locks / can't build). Options mirror MoldParams.
+- After any geometry change, sweep shapes (sphere, torus, capsule, cone,
+  cup, upside-down cup, L-part, plate) x modes x 3+ parting heights and
+  assert every half has no duplicate vertex positions and is watertight
+  after an STL round trip — see "Export integrity" in CLAUDE.md.
+- Large meshes: a 1M-triangle torus (`trimesh.creation.torus(40, 12,
+  major_sections=800, minor_sections=600)`) should upload/analyze in tens
+  of seconds, not minutes.

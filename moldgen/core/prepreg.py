@@ -22,10 +22,8 @@ Geometry (keep_side="below" shown; "above" is mirrored):
                    │   └──────────┘  │
     block_min ─────┴─────────────────┴────────
 
-The kick is approximated by scaling the part's parting-plane cross-section
-about its bounding-box center — exact only for outlines equidistant from
-that center, but at sub-millimeter offsets (8 mm × tan 5° ≈ 0.7 mm) the
-deviation is irrelevant to release or the witness line.
+The kick is a true offset of the parting-plane outline (mfld.drafted_extrude),
+so every edge of the run-out wall gets the same angle, concave ones included.
 """
 
 from __future__ import annotations
@@ -33,9 +31,11 @@ from __future__ import annotations
 import math
 
 import numpy as np
-from manifold3d import Manifold
+from manifold3d import JoinType
 
 from . import hardware, mfld
+
+RUN_OUT_STEP = 0.02  # mm, see _run_out_prism
 
 CURE_NOTES = [
     "3D-printed tools: use a low-temperature-cure prepreg for the initial "
@@ -78,8 +78,7 @@ def build(part_man, part_bounds, z_split, params, warnings):
         tool = tool - extension
     else:
         warnings.append(
-            "part has no cross-section at the parting plane; trim-allowance "
-            "run-out skipped"
+            "part has no cross-section at the parting plane; trim-allowance run-out skipped"
         )
 
     tool, dropped = mfld.keep_main_body(tool)
@@ -103,9 +102,7 @@ def build(part_man, part_bounds, z_split, params, warnings):
             tool = tool - solid
             hw_meta["tape_line"] = info
     if params.flange_bolt_holes:
-        solid, info = hardware.flange_hole_solids(
-            block_min, block_max, m, params, warnings
-        )
+        solid, info = hardware.flange_hole_solids(block_min, block_max, m, params, warnings)
         if solid is not None:
             tool = tool - solid
             hw_meta["flange_holes"] = info
@@ -119,22 +116,34 @@ def build(part_man, part_bounds, z_split, params, warnings):
 
 def _run_out_prism(part_man, z_split, trim, kick_deg, below):
     """The laminate run-out void: part cross-section at the parting plane,
-    extended `trim` past it with an outward kick."""
+    extended `trim` past it with every edge kicked outward by kick_deg — a
+    true offset of the outline, so concave outlines (L-shapes, notches) get
+    the same kick as convex ones."""
     cs = part_man.slice(float(z_split))
-    polygons = cs.to_polygons()
-    if not polygons or cs.area() <= 0:
+    if cs.is_empty() or cs.area() <= 0:
         return None
-    points = np.vstack(polygons)
-    lo, hi = points.min(axis=0), points.max(axis=0)
-    cx, cy = (lo + hi) / 2.0
-    w, h = hi - lo
     height = trim + 1.0  # overshoot past the flange face for a clean boolean
     grow = math.tan(math.radians(kick_deg)) * height
-    scale = (
-        (w + 2.0 * grow) / w if w > 0 else 1.0,
-        (h + 2.0 * grow) / h if h > 0 else 1.0,
-    )
-    prism = Manifold.extrude(cs.translate((-cx, -cy)), height, 0, 0.0, scale)
+    # The base outline IS the part's outline at the plane: its corners sit
+    # on the part's own edges, and on a revolved part the walls rising from
+    # them share planes with the part's meridian edges — edge-on-edge
+    # intersections that leave coincident vertices (non-manifold once a
+    # slicer welds the STL). So the base is grown by a 20 µm step and turned
+    # by an irrational micro-angle about its center (moving no point more
+    # than a quarter of the step, so it still contains the part outline):
+    # a deterministic perturbation that makes every intersection generic.
+    base = cs.offset(RUN_OUT_STEP, JoinType.Round, 2.0, 0)
+    (x0, y0), (x1, y1) = (np.asarray(b) for b in _bounds2d(base))
+    c = ((x0 + x1) / 2.0, (y0 + y1) / 2.0)
+    reach = max(math.hypot(x1 - x0, y1 - y0) / 2.0, 1.0)
+    twist = math.degrees(0.25 * RUN_OUT_STEP / reach) / math.sqrt(2.0)
+    base = base.translate((-c[0], -c[1])).rotate(twist).translate(c)
+    prism = mfld.drafted_extrude(base, height, grow)
     if not below:
         prism = prism.mirror((0.0, 0.0, 1.0))
-    return prism.translate((cx, cy, float(z_split)))
+    return prism.translate((0.0, 0.0, float(z_split)))
+
+
+def _bounds2d(cs):
+    pts = np.vstack([np.asarray(p) for p in cs.to_polygons()])
+    return pts.min(axis=0), pts.max(axis=0)

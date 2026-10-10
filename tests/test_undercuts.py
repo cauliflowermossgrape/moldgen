@@ -5,8 +5,7 @@ import numpy as np
 import pytest
 import trimesh
 
-from moldgen.core import analyze_undercuts, suggest_parting_plane
-from moldgen.core import mfld
+from moldgen.core import analyze_undercuts, mfld, suggest_parting_plane
 
 
 def mushroom():

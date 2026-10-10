@@ -19,6 +19,20 @@
   <main id="app">
     <div id="viewport">
       <div id="drop-hint" class="hidden">Drop STL · 3MF · OBJ</div>
+      <div id="busy" class="hidden" role="status" aria-live="polite">
+        <div class="spinner"></div><span id="busy-text">Working…</span>
+      </div>
+      <div id="view-tools" role="toolbar" aria-label="View">
+        <button class="vt" data-view="iso" title="Isometric view (1)">Iso</button>
+        <button class="vt" data-view="top" title="Top view, looking down −Z (2)">Top</button>
+        <button class="vt" data-view="front" title="Front view, looking along +Y (3)">Front</button>
+        <button class="vt" data-view="fit" title="Fit everything in view (F)">Fit</button>
+      </div>
+      <div id="draft-legend" class="hidden" aria-label="Draft angle scale">
+        <span>undercut</span><i class="ramp"></i><span id="draft-legend-max">+3°</span>
+        <span class="chip"><i class="sw sw-hidden"></i>blocked</span>
+        <span class="chip"><i class="sw sw-unmolded"></i>not molded</span>
+      </div>
       <div id="legend" class="hidden">
         <span class="chip"><i class="sw sw-undercut"></i>undercut — locks</span>
         <span class="chip"><i class="sw sw-hidden"></i>hidden undercut — blocked pull</span>
@@ -41,8 +55,8 @@
           title="How you'll make the mold. Sets the recommended fit clearances below (you can still edit them): resin prints are dimensionally tight (0.15 mm), FDM prints need more play (0.25–0.3 mm), CNC-machined tools can run 0.1 mm like Easy Composites' machined forged tools.">
           <span>Mold made by</span>
           <select id="printer">
-            <option value="resin" selected>Resin print (SLA)</option>
-            <option value="fdm">FDM print</option>
+            <option value="resin" selected>Resin (SLA)</option>
+            <option value="fdm">FDM</option>
             <option value="cnc">CNC machined</option>
           </select>
         </label>
@@ -52,9 +66,19 @@
         <h2>Part</h2>
         <label class="file-drop" for="part-upload">
           <strong>Drop a file</strong> or click to browse
-          <span class="sub" id="format-list">STL · 3MF · OBJ &nbsp;·&nbsp; millimeters</span>
+          <span class="sub" id="format-list">STL · 3MF · OBJ</span>
           <span class="sub muted hidden" id="step-note">STEP/IGES: pip install "moldgen[step]"</span>
           <input type="file" id="part-upload" accept=".stl,.3mf,.obj" />
+        </label>
+        <label class="field"
+          title="Units the file was exported in. Mesh formats carry no units (3MF aside): parts from inch-based CAD come out 25.4x too small unless you say so here. Everything is converted to millimeters on upload.">
+          <span>File units</span>
+          <select id="units">
+            <option value="mm" selected>Millimeters</option>
+            <option value="cm">Centimeters</option>
+            <option value="m">Meters</option>
+            <option value="in">Inches</option>
+          </select>
         </label>
         <div id="step-opts" class="hidden">
           <label class="field"
@@ -97,6 +121,9 @@
         </p>
         <button id="analyze" class="secondary" disabled
           title="Demolding check for the selected mold style: faces that fight their half's pull direction turn red, faces whose pull path is blocked by other part geometry (tilted bores, overhangs) purple, low-draft walls amber. Shell parts (cups, cases) are handled: the inside is molded by a core on the other half, or is the bagged side on a single-sided tool.">Analyze undercuts</button>
+        <label class="check hidden" id="draft-map-row"
+          title="Colors every face by its draft angle relative to the half that molds it: red fights the pull (undercut), amber is under your minimum draft, green releases — brighter green, more draft. Purple faces point the right way but are blocked by other geometry.">
+          <input type="checkbox" id="draft-map" /> Draft-angle map</label>
         <div id="verdicts" class="hidden">
           <div class="kv" id="verdict-bottom-row"><span id="verdict-bottom-label">Female half (−Z pull)</span><span id="verdict-bottom"></span></div>
           <div class="kv" id="verdict-top-row"><span id="verdict-top-label">Male half (+Z pull)</span><span id="verdict-top"></span></div>
@@ -157,6 +184,14 @@
 
       <section class="panel" id="forged-panel">
         <h2>Telescoping section</h2>
+        <label class="field"
+          title="Shape of the plug and pocket. Contour follows the part's outline grown by the plug border: the pinch-off hugs the part, so the charge isn't spread into empty corners and there's less flash to trim. Rectangle uses the bounding box — simplest to machine on a CNC.">
+          <span>Plug shape</span>
+          <select id="plug-shape">
+            <option value="contour" selected>Part outline</option>
+            <option value="rect">Rectangle</option>
+          </select>
+        </label>
         <label class="field"
           title="How far the male plug pistons into the female pocket. Easy Composites: ~6 mm for small tools, 15–20 mm for large ones — allow 2–3× the part depth of travel so there's room to load the chopped fiber charge before compression.">
           <span>Plunge depth (mm)</span>
@@ -294,6 +329,10 @@
         </div>
       </section>
 
+      <p class="hint settings-row">
+        Settings are remembered in this browser.
+        <button class="link" id="reset-settings" title="Restore every setting to its default value.">Reset to defaults</button>
+      </p>
       <footer id="status"><i id="status-dot"></i><span id="status-text">ready</span></footer>
     </aside>
   </main>
