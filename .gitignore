@@ -5,3 +5,4 @@ __pycache__/
 workdir/*
 !workdir/.gitkeep
 .pytest_cache/
+*.deb

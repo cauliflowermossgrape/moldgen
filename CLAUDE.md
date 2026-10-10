@@ -47,11 +47,25 @@ Features (see `forged.py` + `hardware.py`):
   flange — a threaded bolt bears on the female face and jacks the halves
   apart evenly (holes are bolt Ø − 1 mm for self-threading in prints).
 - **Ejector pin hole** (opt-in): through the female base into the cavity at
-  the part centroid; plug with wax/tape before layup.
+  the part centroid — or, when the pin disc wouldn't land fully on the
+  part's underside there (rings, C-shapes), the nearest spot where it does
+  (vertical rays); plug with wax/tape before layup.
+- **Shell cores**: a cup cut through its walls leaves the mold material
+  inside it sealed off from the female by the shell. `forged.transfer_cores`
+  finds these bodies (`mfld.solid_bodies`) and unions them onto the male
+  (inverted shells: onto the female); the single-sided tools drop them
+  (`mfld.keep_main_body`) — the inside is the bagged side.
+- **Charge / loading check**: metadata `forged.charge` estimates the part
+  mass at 1.5 g/cm³ and warns when cavity + pocket (loading volume) is
+  under 2x the part volume (loose chopped fibre bulks 2-3x).
 - **Demolding check** (on by default): generation warns per half about
-  undercut area (part locks) and low-draft walls within `min_draft_deg` of
-  vertical (part drags; common practice is 1-2° minimum draft). The Analyze
-  view colors undercuts red and low-draft walls amber.
+  undercut area (part locks — wrong-facing normals AND faces whose pull ray
+  is blocked by other part geometry) and low-draft walls within
+  `min_draft_deg` of vertical (part drags; common practice is 1-2° minimum
+  draft). Faces are attributed to halves the way the construction builds
+  them (shell cores included). The Analyze view colors undercuts red,
+  occluded ("hidden") undercuts purple, low-draft walls amber, core-molded
+  faces cyan.
 - **Resin overflow channels** on the female flange, from pinch gap to outer
   wall, preventing hydraulic lock.
 - Shared **wall draft** (default 1°) on plug and pocket so the gap stays
@@ -110,19 +124,31 @@ used for vacuum bagging tape (sealant tape sticks to the flat flange).
     flange-band midline, with (x, y, radius) keep-out collision checks
     between feature types.
   - `validate.py` — watertightness checks + best-effort trimesh repair.
-  - `offset.py` — vertex-normal cavity offset (approximate; see docstring
-    for self-intersection caveats).
+  - `offset.py` — cavity offset solving n·d = offset per vertex over the
+    incident face normals, so flat faces move exactly (incl. at sharp
+    edges/corners); see docstring for self-intersection caveats.
+  - `rays.py` — `VerticalRayCaster`: numpy XY-grid ray casting along ±Z
+    (first hit, crossing count, inside test). manifold3d's `ray_cast` is
+    one ray per Python call — too slow per face.
   - `io.py` — `load_part` (STL/3MF/OBJ, plus STEP/IGES when the "step"
     extra is installed) and `export_stl` (binary).
   - `step_io.py` — optional STEP/IGES tessellation via cadquery/OCP behind
     the `step` pyproject extra (OCP wheels are heavy). `HAS_STEP` is the
     runtime capability flag; `/api/health` reports it and the UI greys the
     formats out when missing. Never import cadquery outside this module.
-  - `undercuts.py` — `analyze_undercuts` (first-order per-face normal check
-    against the ±Z pull directions; does NOT catch silhouette-occluded
-    undercuts — that needs visibility testing) and `suggest_parting_plane`
-    (scans 50 candidate heights for minimum undercut area).
+  - `undercuts.py` — `PartVisibility` (per-face ±Z ray distances, computed
+    once per part; the API caches it), `analyze_undercuts` (normals +
+    occlusion + shell cores by exact connectivity, `single_sided` for
+    prepreg/open layup), `parting_profile` and `suggest_parting_plane`
+    (coarse + fine scan using a cheaper core heuristic; two-part ties go to
+    the middle of the tied band, single-sided `side="below"/"above"` to the
+    plane covering the most part).
 - `moldgen/main.py` — FastAPI app, serves `/api/*` and the static frontend.
+  `GenerateRequest` is derived from the `MoldParams` dataclass — add new
+  engine params there only. Requests reject NaN/Infinity (a NaN reaching
+  manifold3d can segfault the server; `_check_params` guards too).
+  Generated STLs are served `no-store` (same path rewritten on regenerate);
+  `/api/download/{id}/mold.zip` bundles halves + setup sheet.
 - Tests generate primitives programmatically (no fixture files) and verify
   mold halves by exact volume arithmetic — manifold booleans are exact on
   the input mesh, so e.g. a z-symmetric icosphere leaves exactly half its
@@ -142,3 +168,8 @@ vertically — that's how thin parts ended up with 40 mm-thick molds.
   http://localhost:8000 (serves API + frontend together).
 - `make test` — run pytest.
 - Units are millimeters throughout (STL convention).
+- `decompose()` returns internal voids as separate inside-out shells
+  (negative volume) — always group with `mfld.solid_bodies` before reasoning
+  about connected bodies.
+- Parting-plane nudges go INTO the part (down past a top face): nudging out
+  seals the cavity under a 1 µm skin.

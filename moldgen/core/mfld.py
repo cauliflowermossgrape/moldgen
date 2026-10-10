@@ -40,3 +40,43 @@ def box(bounds_min, bounds_max) -> Manifold:
 
 def is_valid(man: Manifold) -> bool:
     return man.status().name in ("NoError", "NO_ERROR") and not man.is_empty()
+
+
+def solid_bodies(man: Manifold) -> list[Manifold]:
+    """Connected solid bodies of `man`, each with its internal voids.
+
+    Manifold.decompose() returns every connected surface separately, so an
+    internal void comes back as its own inside-out shell (negative volume).
+    Each void is re-attached to the smallest body whose bounding box holds
+    it, so callers can reason about whole solids.
+    """
+    parts = man.decompose()
+    if len(parts) <= 1:
+        return parts
+    solids = [p for p in parts if p.volume() > 0]
+    voids = [p for p in parts if p.volume() <= 0]
+    if not solids:
+        return parts
+    boxes = [np.asarray(p.bounding_box(), dtype=float).reshape(2, 3) for p in solids]
+    groups: list[list[Manifold]] = [[p] for p in solids]
+    for v in voids:
+        vb = np.asarray(v.bounding_box(), dtype=float).reshape(2, 3)
+        holders = [
+            i for i, b in enumerate(boxes)
+            if np.all(b[0] <= vb[0] + 1e-6) and np.all(b[1] >= vb[1] - 1e-6)
+        ]
+        i = min(holders, key=lambda k: solids[k].volume()) if holders else int(
+            np.argmax([p.volume() for p in solids])
+        )
+        groups[i].append(v)
+    return [g[0] if len(g) == 1 else Manifold.compose(g) for g in groups]
+
+
+def keep_main_body(man: Manifold) -> tuple[Manifold, int]:
+    """Largest connected solid of `man`, plus how many others were dropped
+    (shell interiors or bodies sealed off from the main one)."""
+    bodies = solid_bodies(man)
+    if len(bodies) <= 1:
+        return man, 0
+    bodies.sort(key=lambda b: b.volume(), reverse=True)
+    return bodies[0], len(bodies) - 1

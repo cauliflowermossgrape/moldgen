@@ -31,10 +31,15 @@ Use a non-default port (8765) — the user may have `make dev` running on 8000.
 
 ## Frontend
 
-Static files served by the same server at `/`. No headless browser in this
-environment — `node --input-type=module --check < frontend/main.js` catches
-syntax errors; visual checks need the user to open http://localhost:8000 and
-paste a screenshot. three.js loads from jsdelivr CDN (needs internet).
+Static files served by the same server at `/`. `node --input-type=module
+--check < frontend/main.js` catches syntax errors. For a real check, drive
+it headless: node Playwright lives at `/opt/node-tools/node_modules/playwright`
+and Chromium at `/opt/pw-browsers/chromium-*/chrome-linux/chrome` (launch
+with `--use-gl=swiftshader --enable-unsafe-swiftshader` for WebGL). The
+jsdelivr CDN may be blocked by the network policy: `npm pack three@0.166.1`
+into the scratchpad and `page.route('https://cdn.jsdelivr.net/npm/three@0.166.1/**')`
+to serve those files instead. `page.setInputFiles('#part-upload', stl)`,
+click `#analyze` / `#generate`, read `#status-text`, take screenshots.
 
 ## Gotchas
 
