@@ -12,6 +12,9 @@ side as a single-sided tool.
 
 from __future__ import annotations
 
+import dataclasses
+import math
+
 import numpy as np
 import trimesh
 
@@ -42,6 +45,15 @@ def generate_mold(mesh: trimesh.Trimesh, params: MoldParams) -> MoldResult:
             f"largest part dimension is {part.extents.max():.4g} mm; "
             "if the model was exported in meters, scale it by 1000"
         )
+
+    if params.shrink_comp_pct:
+        # scale about the bbox center at the parting height, so the plane
+        # keeps cutting the part where the user put it
+        factor = 1.0 + params.shrink_comp_pct / 100.0
+        cx, cy = part.bounds.mean(axis=0)[:2]
+        pivot = np.array([cx, cy, float(params.parting_z_mm)])
+        part = part.copy()
+        part.vertices = (part.vertices - pivot) * factor + pivot
 
     if params.cavity_offset_mm:
         part = offset_mesh(part, params.cavity_offset_mm)
@@ -81,8 +93,9 @@ def generate_mold(mesh: trimesh.Trimesh, params: MoldParams) -> MoldResult:
 
     z_split = _nudged_parting_height(part, z, warnings)
 
+    demold_meta = None
     if params.demold_check:
-        _demold_warnings(part, z_split, params, warnings)
+        demold_meta = _demold_warnings(part, z_split, params, warnings)
 
     hardware_meta: dict = {}
     extra_meta: dict = {}
@@ -92,7 +105,7 @@ def generate_mold(mesh: trimesh.Trimesh, params: MoldParams) -> MoldResult:
         try:
             female, male, forged_meta, hardware_meta = forged.build(
                 part_man, bounds, z_split, params, warnings,
-                part_centroid_xy=part.center_mass[:2],
+                part_mesh=part, part_centroid_xy=part.center_mass[:2],
             )
         except ValueError as exc:
             return MoldResult(ok=False, errors=[str(exc)], warnings=warnings)
@@ -154,6 +167,9 @@ def generate_mold(mesh: trimesh.Trimesh, params: MoldParams) -> MoldResult:
         above, below = (half_a, half_b) if z_a >= z_b else (half_b, half_a)
 
         keep = above if params.keep_side == "above" else below
+        keep, dropped = mfld.keep_main_body(keep)
+        if dropped:
+            warnings.append(prepreg.SHELL_DROP_NOTE.format(n=dropped))
         if params.trim_groove:
             groove, groove_info = hardware.trim_groove_solid(
                 bounds, block_min, block_max, z_split, params, warnings
@@ -162,6 +178,10 @@ def generate_mold(mesh: trimesh.Trimesh, params: MoldParams) -> MoldResult:
                 keep = keep - groove
                 hardware_meta["trim_groove"] = groove_info
         halves = {"tool": mfld.to_trimesh(keep)}
+        if params.keep_side == "above":
+            block_min = np.append(block_min[:2], z_split)
+        else:
+            block_max = np.append(block_max[:2], z_split)
         block_bounds = [block_min.tolist(), block_max.tolist()]
 
     block_size = np.asarray(block_bounds[1]) - np.asarray(block_bounds[0])
@@ -177,47 +197,91 @@ def generate_mold(mesh: trimesh.Trimesh, params: MoldParams) -> MoldResult:
         "halves": {name: _mesh_stats(h) for name, h in halves.items()},
         **extra_meta,
     }
+    if demold_meta is not None:
+        metadata["demold"] = demold_meta
     return MoldResult(ok=True, halves=halves, warnings=warnings, metadata=metadata)
 
 
 def _demold_warnings(
     part: trimesh.Trimesh, z_split: float, params: MoldParams, warnings: list[str]
-) -> None:
+) -> dict:
     """Warn about geometry that will fight demolding, per half.
 
-    Undercuts mean the part mechanically locks in that half; low-draft walls
-    (within min_draft_deg of vertical) release but drag and score — common
-    molding practice wants 1-2° minimum draft on them.
+    Undercuts mean the part mechanically locks in that half (including
+    faces whose pull path is blocked by other part geometry); low-draft
+    walls (within min_draft_deg of vertical) release but drag and score —
+    common molding practice wants 1-2° minimum draft on them. Shell cores
+    are attributed the way the construction builds them. Returns the
+    per-half numbers for the metadata.
     """
-    report = analyze_undercuts(part, z_split, min_draft_deg=params.min_draft_deg)
+    single = params.mode != "compression"
+    report = analyze_undercuts(
+        part, z_split, min_draft_deg=params.min_draft_deg, single_sided=single
+    )
+    top = report.face_molded_by_top
     if params.mode == "compression":
-        sides = (("female", report.bottom), ("male", report.top))
+        sides = (("female", report.bottom, ~top), ("male", report.top, top))
     else:
-        side = report.bottom if params.keep_side == "below" else report.top
-        sides = (("tool", side),)
+        below = params.keep_side == "below"
+        sides = (("tool", report.bottom if below else report.top, ~top if below else top),)
     mitigation = (
         "rely on release agent, pry slots and jack screws"
         if params.mode == "compression"
         else "rely on release agent and wedges at the flange"
     )
-    for name, half in sides:
-        if half.undercut_area_mm2 > 0:
+    practice = (
+        "Easy Composites recommend >3° of draft on laminating tools"
+        if params.mode == "prepreg"
+        else "common practice is 1-2° minimum draft"
+    )
+    for name, half, mask in sides:
+        occluded = float(part.area_faces[report.face_is_occluded & mask].sum())
+        if half.undercut_area_mm2 > 0 and not half.likely_demoldable:
+            hidden = (
+                f" ({occluded:.0f} mm² of it is hidden behind other part geometry "
+                "in the pull direction)"
+                if occluded > 0
+                else ""
+            )
             warnings.append(
                 f"demolding: {half.undercut_area_mm2:.0f} mm² of undercuts in the "
-                f"{name} cavity — the part will mechanically lock; move the parting "
-                "plane (see the suggested height) or reshape the part"
+                f"{name} cavity{hidden} — the part will mechanically lock; move the "
+                "parting plane (see the suggested height), re-orient the part, or "
+                "reshape it"
             )
         elif half.low_draft_area_mm2 > 0:
             warnings.append(
                 f"demolding: {half.low_draft_area_mm2:.0f} mm² of walls in the "
                 f"{name} cavity have <{params.min_draft_deg:g}° draft; the part "
-                f"will drag on release — common practice is 1-2° minimum draft, or "
-                f"{mitigation}"
+                f"will drag on release — {practice}, or {mitigation}"
             )
+    return {
+        name: {
+            "undercut_area_mm2": half.undercut_area_mm2,
+            "low_draft_area_mm2": half.low_draft_area_mm2,
+            "likely_demoldable": half.likely_demoldable,
+        }
+        for name, half, _ in sides
+    }
 
 
 def _check_params(p: MoldParams) -> list[str]:
     errors = []
+    # NaN/inf would reach manifold3d as geometry, which can crash the
+    # process outright — reject before anything else
+    bad = [
+        f.name
+        for f in dataclasses.fields(p)
+        if isinstance(getattr(p, f.name), (int, float))
+        and not isinstance(getattr(p, f.name), bool)
+        and not math.isfinite(getattr(p, f.name))
+    ]
+    if bad:
+        return [f"{', '.join(bad)} must be finite numbers"]
+    if not -5 <= p.shrink_comp_pct <= 5:
+        errors.append(f"shrink_comp_pct must be within ±5, got {p.shrink_comp_pct:g}")
+    if abs(p.cavity_offset_mm) > 5:
+        errors.append(f"cavity_offset_mm must be within ±5, got {p.cavity_offset_mm:g}")
     if p.mode not in VALID_MODES:
         errors.append(f"mode must be one of {VALID_MODES}, got {p.mode!r}")
     if p.wall_margin_mm <= 0:
@@ -294,25 +358,34 @@ def _nudged_parting_height(part: trimesh.Trimesh, z: float, warnings: list[str])
     A pocket floor or plane split exactly through coplanar facets is
     numerically ambiguous (the flat face and the cavity wall coincide). A
     ~1 µm nudge is physically invisible but keeps the geometry unambiguous.
-    float32 (manifold's vertex type) resolves ~1e-7 relative, so 1e-3 mm is
-    safely representable at part scale.
+    The nudge goes INTO the part — down past a top face, up past a bottom
+    face — so the cavity stays open to the other half instead of being
+    sealed under a 1 µm skin. float32 (manifold's vertex type) resolves
+    ~1e-7 relative, so 1e-3 mm is safely representable at part scale.
     """
     diag = float(np.linalg.norm(part.extents))
     tol = 1e-8 * max(diag, 1.0)
     eps = max(1e-3, 1e-6 * diag)
     verts_z = part.vertices[:, 2]
 
+    def coplanar(zz):
+        on_plane = np.abs(verts_z - zz) <= tol
+        return np.all(on_plane[part.faces], axis=1)
+
+    flat = coplanar(z)
+    if not flat.any():
+        return z
+    facing_up = float((part.face_normals[flat, 2] * part.area_faces[flat]).sum()) > 0
+    step = -eps if facing_up else eps
     z_out = z
     for _ in range(4):
-        on_plane = np.abs(verts_z - z_out) <= tol
-        if not np.all(on_plane[part.faces], axis=1).any():
+        z_out += step
+        if not coplanar(z_out).any():
             break
-        z_out += eps
-    if z_out != z:
-        warnings.append(
-            f"parting plane coincides with flat part facets; "
-            f"split nudged to z={z_out:.6g} mm"
-        )
+    warnings.append(
+        f"parting plane coincides with flat part facets; "
+        f"split nudged to z={z_out:.6g} mm"
+    )
     return z_out
 
 

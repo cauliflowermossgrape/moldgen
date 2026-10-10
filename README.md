@@ -33,7 +33,11 @@ Whichever way you spell it — carbon fiber or carbon fibre, mold or mould — t
 | **Prepreg / laminating tool** | Single-sided female tool with a trim-allowance run-out (witness line to trim to), bagging flange, sealant-tape guide line, optional split-mould bush holes. |
 | **Open layup** | Basic single-sided female tool with a flat bagging flange. |
 
-Before you commit plastic, the built-in **demolding check** highlights faces that will lock (red) or drag (amber) during demolding, and the parting height is auto-suggested. Printer presets (resin / FDM / CNC) set all fit clearances in one click.
+Before you commit plastic, the built-in **demolding check** highlights faces that will lock (red), faces whose pull path is blocked by other geometry (purple — tilted bores, overhangs), and walls that will drag (amber). The parting height is auto-suggested for the mold style you pick, with an undercut-vs-height chart under the slider. Printer presets (resin / FDM / CNC) set all fit clearances in one click.
+
+**Shell parts work.** Cups, cases, bowls and panels are handled properly: on a compression mold the inside of the shell is molded by a core built onto the male (or onto the female, for an upside-down shell); on a laminating tool the inside is left open as the bagged side. No loose cores trapped in the cavity.
+
+Also built in: a section view to inspect the closed mold, a forged-carbon charge-weight estimate and loading-volume check, shrinkage compensation, exact cavity offsets, and a one-click ZIP with every half plus a printable setup sheet.
 
 ## Setup on Windows
 
@@ -71,8 +75,8 @@ Open **http://localhost:8000**. (If you have `make`: `make dev` does all of the 
 2. **Drop your model** into the viewport (STL, 3MF or OBJ, in millimeters). You'll see dimensions, a watertightness check, and a warning if the model looks like it was exported in meters.
 3. **Set the parting plane** with the slider (it starts at the auto-suggested height) and click **Analyze undercuts** — red faces will lock in the mold, amber faces will drag. Adjust until it's clean.
 4. **Pick a mold style** and tweak settings — hover anything to see what it means.
-5. **Generate mold** — inspect the halves with the explode slider and ghost-part toggle, read any warnings (they tell you what was shrunk, moved or skipped, and anything about your part that will fight demolding).
-6. **Download** the STL per half and slice it like any other print.
+5. **Generate mold** — inspect the halves with the explode slider, ghost-part toggle and section view; read any warnings (they tell you what was shrunk, moved or skipped, and anything about your part that will fight demolding). Compression molds also show the charge weight to load.
+6. **Download** the STL per half — or the ZIP with all halves and a setup sheet — and slice it like any other print.
 
 Uploaded parts and generated molds are stored in the local `workdir/` folder — nothing leaves your machine.
 
@@ -97,12 +101,14 @@ Surfaces are tessellated on upload with adjustable precision; IGES files are sew
 | STEP upload says "not installed" | Install the `step` extra (see above); on Linux also `sudo apt install libgl1`. |
 | "mesh is not watertight" error | Your model has holes/open edges. moldgen attempts repair automatically; if it still fails, fix the export in your CAD tool (export as a solid, not surfaces). |
 | Mold seems too big/thick | *Wall margin* is horizontal (flange room for pins/bolts); *Base thickness* is the vertical shell — lower it for thin parts. |
+| Part is tiny (a few mm) | It was probably exported in inches or meters — rescale by 25.4 or 1000 in your CAD tool. |
+| "loading volume" warning | Loose chopped fibre bulks to 2–3× its pressed volume; raise *Plunge depth* so the charge fits before the plug engages. |
 
 ## For developers
 
 ```sh
 .venv/bin/pip install -e ".[dev]"
-.venv/bin/python -m pytest        # 48 tests, a few seconds
+.venv/bin/python -m pytest        # ~85 tests, a few seconds
 ```
 
 ```
@@ -112,16 +118,19 @@ moldgen/
     forged.py        telescoping compression construction
     prepreg.py       laminating-tool construction
     hardware.py      pins, bolts, pry slots, jack screws, overflow, scribes
-    undercuts.py     demold + drape analysis, parting-plane suggestion
+    undercuts.py     demold (normals + occlusion + shell cores) & drape analysis,
+                     parting-plane suggestion and profile
+    rays.py          vectorized vertical ray casting (visibility, inside tests)
+    offset.py        plane-exact cavity offset
     step_io.py       optional STEP/IGES tessellation (cadquery/OCP)
   main.py          FastAPI app: JSON API + static frontend
 frontend/          vanilla JS + three.js viewport (no build step)
 tests/             pytest — geometry verified by exact volume arithmetic
 ```
 
-All booleans run through [manifold3d](https://github.com/elalish/manifold) (watertight-guaranteed); trimesh handles I/O and analysis. The frontend talks to a small JSON API (`POST /api/upload`, `/api/analyze`, `/api/generate`, `GET /api/download/{id}/{half}.stl`) — script it directly if you prefer. Units are millimeters everywhere.
+All booleans run through [manifold3d](https://github.com/elalish/manifold) (watertight-guaranteed); trimesh handles I/O and analysis. The frontend talks to a small JSON API (`POST /api/upload`, `/api/orient`, `/api/analyze`, `/api/generate`, `GET /api/download/{id}/{half}.stl` and `/api/download/{id}/mold.zip`) — script it directly if you prefer. Units are millimeters everywhere.
 
-Known limitations: the undercut check is first-order (won't catch silhouette-occluded undercuts like tilted bores), the parting surface is a flat plane, and fillets can't be added to your part automatically — the drape check tells you where they're needed.
+Known limitations: the parting surface is a flat plane (re-orient the part with *Lay on face* to choose it), the occlusion check samples one ray per triangle (dense meshes make this a non-issue), and fillets can't be added to your part automatically — the drape check tells you where they're needed.
 
 ## License
 

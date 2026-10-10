@@ -184,3 +184,110 @@ def test_bad_requests(client):
 
     resp = client.get(f"/api/download/{up['mesh_id']}/female.stl")
     assert resp.status_code == 404  # not generated yet
+
+
+def test_non_finite_json_is_a_readable_422(client):
+    up = upload_mushroom(client)
+    body = '{"mesh_id": "%s", "parting_z_mm": 22, "plunge_mm": NaN}' % up["mesh_id"]
+    resp = client.post(
+        "/api/generate", content=body, headers={"content-type": "application/json"}
+    )
+    assert resp.status_code == 422
+    assert "plunge_mm" in resp.json()["detail"]
+    assert "finite" in resp.json()["detail"]
+
+
+def test_generate_accepts_every_engine_param(client):
+    # the request model is derived from MoldParams, so e.g. pin sizing works
+    up = upload_mushroom(client)
+    gen = client.post(
+        "/api/generate",
+        json={
+            "mesh_id": up["mesh_id"],
+            "parting_z_mm": up["suggested_parting_z_mm"],
+            "pin_radius_mm": 3.0,
+            "shrink_comp_pct": 0.5,
+        },
+    ).json()
+    assert gen["ok"] is True, gen.get("errors")
+    assert gen["metadata"]["hardware"]["pins"]["radius"] == 3.0
+
+
+def test_bundle_zip_and_no_store(client):
+    import io
+    import zipfile
+
+    up = upload_mushroom(client)
+    assert client.get("/api/download/%s/mold.zip" % up["mesh_id"]).status_code == 404
+    gen = client.post(
+        "/api/generate",
+        json={"mesh_id": up["mesh_id"], "parting_z_mm": up["suggested_parting_z_mm"]},
+    ).json()
+    resp = client.get(gen["bundle_url"])
+    assert resp.status_code == 200
+    zf = zipfile.ZipFile(io.BytesIO(resp.content))
+    names = set(zf.namelist())
+    assert {"moldgen-female.stl", "moldgen-male.stl", "moldgen-setup.txt"} <= names
+    sheet = zf.read("moldgen-setup.txt").decode()
+    assert "Charge" in sheet or "forged part" in sheet
+    # halves are rewritten under the same path: must never be cached
+    half = client.get(gen["halves"]["male"]["url"])
+    assert half.headers["cache-control"] == "no-store"
+
+
+def test_mode_switch_and_orient_clear_stale_halves(client):
+    up = upload_mushroom(client)
+    mid = up["mesh_id"]
+    z = up["suggested_parting_z_mm"]
+    assert client.post("/api/generate", json={"mesh_id": mid, "parting_z_mm": z}).json()["ok"]
+    assert client.get(f"/api/download/{mid}/female.stl").status_code == 200
+    gen = client.post(
+        "/api/generate", json={"mesh_id": mid, "parting_z_mm": z, "mode": "open_layup"}
+    ).json()
+    assert gen["ok"]
+    # compression halves from the previous run are gone
+    assert client.get(f"/api/download/{mid}/female.stl").status_code == 404
+    client.post("/api/orient", json={"mesh_id": mid, "down": [1, 0, 0]})
+    assert client.get(f"/api/download/{mid}/tool.stl").status_code == 404
+
+
+def test_upload_reports_mode_suggestions_and_profile(client):
+    up = upload_mushroom(client)
+    s = up["suggested"]
+    assert set(s) == {"two_part", "below", "above"}
+    # a tool below the plane can cover the whole mushroom (cap top up)
+    assert s["below"] > 24.0
+    prof = up["parting_profile"]
+    assert len(prof["z"]) == len(prof["two_part"]) == len(prof["below"]) == len(prof["above"])
+    # through the stem the cap locks the two-part mold
+    i = min(range(len(prof["z"])), key=lambda k: abs(prof["z"][k] - 10.0))
+    assert prof["two_part"][i] > 0
+
+
+def test_analyze_single_sided_and_min_draft(client):
+    up = upload_mushroom(client)
+    an = client.post(
+        "/api/analyze",
+        json={
+            "mesh_id": up["mesh_id"],
+            "parting_z_mm": up["suggested"]["below"],
+            "mode": "prepreg",
+            "keep_side": "below",
+            "min_draft_deg": 3.0,
+        },
+    ).json()
+    assert an["single_sided"] is True
+    assert an["min_draft_deg"] == 3.0
+    assert an["bottom"]["likely_demoldable"]
+    bad = client.post(
+        "/api/analyze",
+        json={"mesh_id": up["mesh_id"], "parting_z_mm": 20, "min_draft_deg": 0},
+    )
+    assert bad.status_code == 400
+
+
+def test_upload_size_limit(client, monkeypatch):
+    monkeypatch.setattr(main, "MAX_UPLOAD_BYTES", 1000)
+    data = trimesh.exchange.stl.export_stl(trimesh.creation.icosphere())
+    resp = client.post("/api/upload", files={"file": ("big.stl", data, "model/stl")})
+    assert resp.status_code == 413

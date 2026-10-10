@@ -234,82 +234,168 @@ def jack_screw_holes(block_min, block_max, inset, params, avoid, warnings):
     return _union(holes), info
 
 
-def ejector_hole(block_min, center_xy, z_split, params, warnings):
+EJECTOR_OVERSHOOT = 0.3  # how far the hole pokes past the cavity surface
+EJECTOR_MIN_WALL = 1.0  # part material required above the pin face
+
+
+def ejector_hole(block_min, part_mesh, z_split, params, warnings, preferred_xy=None):
     """Ejector-pin hole through the female base into the cavity floor.
 
     Standard compression-molding practice: a pin or dowel pushed through it
-    ejects a stuck part. Placed at the part's volume centroid — the deepest,
-    stickiest region of the cavity. The hole opens into the cavity, so it
-    must be plugged (wax/tape) before layup and the part carries a small
-    witness mark. Subtract from the FEMALE only.
+    ejects a stuck part. The hole must land squarely on the part: every
+    point of the pin's disc has to hit part surface from below, below the
+    parting plane (female-molded), with at least EJECTOR_MIN_WALL of part
+    material above the pin face. The search starts at `preferred_xy` (the
+    volume centroid — the deepest, stickiest region) and falls back to the
+    nearest flat-bottomed spots, so ring- or C-shaped parts whose centroid
+    is empty space never get a hole straight into the pocket floor. The
+    hole opens into the cavity, so it must be plugged (wax/tape) before
+    layup and the part carries a small witness mark. Subtract from the
+    FEMALE only. Returns (hole, info), or (None, None) when no spot fits.
     """
+    from .rays import VerticalRayCaster
+
     r = params.ejector_diameter_mm / 2.0
-    x, y = (float(v) for v in center_xy)
-    z0 = float(block_min[2]) - 1.0
-    hole = Manifold.cylinder(z_split - z0, r, r, CIRCULAR_SEGMENTS).translate((x, y, z0))
-    warnings.append(
-        "ejector hole opens into the cavity — plug it with wax or tape before "
-        "layup; the part will carry a small witness mark"
+    caster = VerticalRayCaster.from_mesh(part_mesh)
+    z_floor = float(part_mesh.bounds[0][2]) - 1.0
+    ring = np.array(
+        [[0.0, 0.0]]
+        + [[math.cos(a) * r, math.sin(a) * r] for a in np.linspace(0, 2 * math.pi, 12, endpoint=False)]
     )
-    return hole, {"center": [x, y], "radius": float(r)}
+
+    def landing(xy):
+        """(top of the hole, ok) for a pin centered at xy."""
+        pts = np.column_stack([xy[0] + ring[:, 0], xy[1] + ring[:, 1], np.full(len(ring), z_floor)])
+        t_in = caster.first_hit(pts, 1.0)
+        if not np.all(np.isfinite(t_in)):
+            return None
+        z_in = z_floor + t_in
+        if np.any(z_in >= z_split):
+            return None
+        top = float(z_in.max()) + EJECTOR_OVERSHOOT
+        inside = pts.copy()
+        inside[:, 2] = z_in + 1e-6
+        t_out = caster.first_hit(inside, 1.0)
+        if np.any(z_in + t_out < top + EJECTOR_MIN_WALL):
+            return None
+        return top
+
+    center = np.asarray(
+        preferred_xy if preferred_xy is not None else part_mesh.bounds.mean(axis=0)[:2],
+        dtype=float,
+    )
+    candidates = [center]
+    # fallbacks: centroids of downward-facing faces, nearest first
+    down = part_mesh.face_normals[:, 2] < -0.5
+    if down.any():
+        cxy = part_mesh.triangles_center[down][:, :2]
+        order = np.argsort(np.linalg.norm(cxy - center, axis=1))
+        candidates += list(cxy[order[:400]])
+
+    for xy in candidates:
+        top = landing(xy)
+        if top is not None:
+            x, y = float(xy[0]), float(xy[1])
+            z0 = float(block_min[2]) - 1.0
+            hole = Manifold.cylinder(top - z0, r, r, CIRCULAR_SEGMENTS).translate((x, y, z0))
+            if np.linalg.norm(np.asarray(xy) - center) > 1e-6:
+                warnings.append(
+                    f"ejector hole moved to ({x:.1f}, {y:.1f}) — the part has "
+                    "no flat underside at its centroid"
+                )
+            warnings.append(
+                "ejector hole opens into the cavity — plug it with wax or tape before "
+                "layup; the part will carry a small witness mark"
+            )
+            return hole, {"center": [x, y], "radius": float(r), "top_z": top}
+    warnings.append(
+        f"no spot on the part's underside fits a {2 * r:g} mm ejector pin; "
+        "ejector hole skipped"
+    )
+    return None, None
 
 
 def pry_slot_solids(block_min, block_max, z_flange, params, avoid, warnings):
     """Wedge slots across the flange seam, subtracted from BOTH halves.
 
-    One slot at the middle of each ±Y outer edge: a rectangular notch
-    reaching PRY_REACH into the band, half pry_slot_depth_mm into each half,
-    so a wedge or flat screwdriver can break the cured seam open (Easy
-    Composites use a 3 mm chamfer for the same job). `avoid` is a list of
-    (x, y, radius) keep-outs; a conflicting slot slides along its edge, and
-    is skipped with a warning if it still conflicts.
+    Two slots on opposite outer edges — the ±Y edges by default, falling
+    back to the ±X edges when pins/bolts crowd a Y edge. Each is a
+    rectangular notch reaching PRY_REACH into the band, half
+    pry_slot_depth_mm into each half, so a wedge or flat screwdriver can
+    break the cured seam open (Easy Composites use a 3 mm chamfer for the
+    same job). `avoid` is a list of (x, y, radius) keep-outs; a conflicting
+    slot slides along its edge and narrows before giving up.
     """
     w0 = params.pry_slot_width_mm
     d = params.pry_slot_depth_mm
-    x_lo, x_hi = float(block_min[0]), float(block_max[0])
-    # scan outward from the edge middle; shrink the slot if pins/bolts crowd it
+    lo = (float(block_min[0]), float(block_min[1]))
+    hi = (float(block_max[0]), float(block_max[1]))
+    # scan outward from the edge middle
     t_candidates = (0.5, 0.42, 0.58, 0.34, 0.66, 0.26, 0.74, 0.18, 0.82)
 
-    def find_spot(y_lo, y_hi, width):
+    def find_spot(axis, wall, direction, width):
+        """Slot along `axis` ("x": the slot sits on a Y wall and slides in
+        x) at `wall`, cutting inward in `direction`."""
+        a = 0 if axis == "x" else 1
+        n_lo = min(wall, wall + direction * PRY_REACH)
+        n_hi = max(wall, wall + direction * PRY_REACH)
         for t in t_candidates:
-            x = x_lo + t * (x_hi - x_lo)
-            if not any(
-                abs(x - ax) < width / 2.0 + ar + 1.5 and y_lo - ar <= ay <= y_hi + ar
-                for ax, ay, ar in avoid
-            ):
-                return x
+            c = lo[a] + t * (hi[a] - lo[a])
+            if c - width / 2.0 < lo[a] + 2.0 or c + width / 2.0 > hi[a] - 2.0:
+                continue
+            ok = True
+            for ax, ay, ar in avoid:
+                along, across = (ax, ay) if axis == "x" else (ay, ax)
+                if abs(c - along) < width / 2.0 + ar + 1.5 and n_lo - ar - 1.5 <= across <= n_hi + ar + 1.5:
+                    ok = False
+                    break
+            if ok:
+                return c
         return None
 
-    slots, centers, widths = [], [], []
-    for y_wall, direction in ((float(block_min[1]), 1.0), (float(block_max[1]), -1.0)):
-        y_lo = min(y_wall, y_wall + direction * PRY_REACH)
-        y_hi = max(y_wall, y_wall + direction * PRY_REACH)
-        placed = None
+    def place(axis, wall, direction):
         for width in (w0, 0.75 * w0, 0.6 * w0, 0.5 * w0):
             if width < 8.0:
                 break
-            x = find_spot(y_lo, y_hi, width)
-            if x is not None:
-                placed = (x, width)
+            c = find_spot(axis, wall, direction, width)
+            if c is not None:
+                return c, width
+        return None
+
+    # (preferred edge, fallback edge) for each of the two slots
+    edges = (
+        (("x", lo[1], 1.0), ("y", lo[0], 1.0)),
+        (("x", hi[1], -1.0), ("y", hi[0], -1.0)),
+    )
+    slots, centers, widths, keepouts = [], [], [], []
+    for preferred, fallback in edges:
+        placed = None
+        for axis, wall, direction in (preferred, fallback):
+            spot = place(axis, wall, direction)
+            if spot is not None:
+                placed = (axis, wall, direction, *spot)
                 break
         if placed is None:
-            warnings.append(
-                f"no clear spot for a pry slot on the y={y_wall:g} edge; skipped"
-            )
+            warnings.append("no clear spot for a pry slot on either edge; one skipped")
             continue
-        x, width = placed
+        axis, wall, direction, c, width = placed
         if width < w0:
-            warnings.append(
-                f"pry slot on the y={y_wall:g} edge narrowed to {width:g} mm "
-                "to clear pins/bolts"
+            warnings.append(f"pry slot narrowed to {width:g} mm to clear pins/bolts")
+        start = wall - 1.0 if direction > 0 else wall - PRY_REACH
+        mid = wall + direction * PRY_REACH / 2.0
+        if axis == "x":
+            solid = Manifold.cube((width, PRY_REACH + 1.0, 2.0 * d)).translate(
+                (c - width / 2.0, start, z_flange - d)
             )
-        y_start = y_wall - 1.0 if direction > 0 else y_wall - PRY_REACH
-        slots.append(
-            Manifold.cube((width, PRY_REACH + 1.0, 2.0 * d)).translate(
-                (x - width / 2.0, y_start, z_flange - d)
+            centers.append([float(c), float(wall)])
+            keepouts.append((float(c), float(mid), max(width, PRY_REACH) / 2.0))
+        else:
+            solid = Manifold.cube((PRY_REACH + 1.0, width, 2.0 * d)).translate(
+                (start, c - width / 2.0, z_flange - d)
             )
-        )
-        centers.append([float(x), float(y_wall)])
+            centers.append([float(wall), float(c)])
+            keepouts.append((float(mid), float(c), max(width, PRY_REACH) / 2.0))
+        slots.append(solid)
         widths.append(float(width))
 
     if not slots:
@@ -320,8 +406,26 @@ def pry_slot_solids(block_min, block_max, z_flange, params, avoid, warnings):
         "widths": widths,
         "depth": float(d),
         "reach": PRY_REACH,
+        "keepouts": [list(k) for k in keepouts],
     }
     return _union(slots), info
+
+
+def _segment_clear(p0, p1, avoid, pad) -> bool:
+    """True when the segment p0-p1 stays more than r + pad from every
+    (x, y, r) keep-out circle."""
+    (x0, y0), (x1, y1) = p0, p1
+    dx, dy = x1 - x0, y1 - y0
+    seg2 = dx * dx + dy * dy
+    for ax, ay, ar in avoid:
+        t = 0.0 if seg2 == 0 else max(0.0, min(1.0, ((ax - x0) * dx + (ay - y0) * dy) / seg2))
+        if math.hypot(x0 + t * dx - ax, y0 + t * dy - ay) <= ar + pad:
+            return False
+    return True
+
+
+# fractional slides tried, in order, when a channel's ideal spot is blocked
+_SLIDES = (0.0, 0.04, -0.04, 0.08, -0.08, 0.12, -0.12, 0.16, -0.16, 0.22, -0.22)
 
 
 def overflow_channel_solids(
@@ -329,61 +433,69 @@ def overflow_channel_solids(
 ):
     """Resin overflow channels on the female flange face.
 
-    Shallow grooves running radially from the pocket wall (where the
+    Shallow grooves running straight out from the pocket wall (where the
     pinch-off gap delivers squeezed-out resin) to the outer wall, so excess
-    resin escapes instead of hydraulically locking the mold. overflow_per_edge
-    channels per edge, evenly spaced along the pocket wall; channels that
-    would cut into a pin, bolt or pry slot are skipped with a warning.
-    Subtract the result from the FEMALE half only.
+    resin escapes instead of hydraulically locking the mold.
+    overflow_per_edge channels per edge, evenly spaced along the pocket
+    wall; a channel whose ideal spot crosses a pin, bolt, jack screw or pry
+    slot slides along the edge to the nearest clear spot, and is only
+    skipped (with a warning) when none exists. Subtract the result from the
+    FEMALE half only.
     """
     w = params.overflow_width_mm
     d = params.overflow_depth_mm
     k = params.overflow_per_edge
     qx0, qy0, qx1, qy1 = (float(v) for v in pocket_rect)
+    bx0, by0 = float(block_min[0]), float(block_min[1])
+    bx1, by1 = float(block_max[0]), float(block_max[1])
+    pad = w / 2.0 + 1.0
+    min_sep = 3.0 * w  # keep neighbouring channels on one edge distinct
 
-    def clear_of(x, y):
-        return all(
-            math.hypot(x - ax, y - ay) > w / 2.0 + ar + 1.5 for ax, ay, ar in avoid
-        )
-
+    # (edge length axis, fixed inner coord, outer wall coord, along-range)
+    edges = (
+        ("x", qy0, by0, (qx0, qx1)),  # front: channel at x, crossing the band in y
+        ("x", qy1, by1, (qx0, qx1)),  # back
+        ("y", qx0, bx0, (qy0, qy1)),  # left: channel at y, crossing the band in x
+        ("y", qx1, bx1, (qy0, qy1)),  # right
+    )
     channels = []
-    skipped = 0
-    for i in range(k):
-        t = (i + 1) / (k + 1)
-        # front/back edges: channel at x along the pocket edge, crossing the band in y
-        for x, (y_in, y_out) in (
-            (qx0 + t * (qx1 - qx0), (qy0, float(block_min[1]))),
-            (qx0 + t * (qx1 - qx0), (qy1, float(block_max[1]))),
-        ):
-            mid_y = (y_in + y_out) / 2.0
-            if clear_of(x, mid_y):
-                lo, hi = min(y_in, y_out), max(y_in, y_out)
-                channels.append(
-                    Manifold.cube((w, hi - lo + 2.0, d + 1.0)).translate(
-                        (x - w / 2.0, lo - 1.0, z_flange - d)
-                    )
+    skipped = moved = 0
+    for axis, inner, outer, (a0, a1) in edges:
+        placed: list[float] = []
+        for i in range(k):
+            t0 = (i + 1) / (k + 1)
+            spot = None
+            for dt in _SLIDES:
+                t = t0 + dt
+                if not 0.08 <= t <= 0.92:
+                    continue
+                c = a0 + t * (a1 - a0)
+                if any(abs(c - o) < min_sep for o in placed):
+                    continue
+                p0, p1 = ((c, inner), (c, outer)) if axis == "x" else ((inner, c), (outer, c))
+                if _segment_clear(p0, p1, avoid, pad):
+                    spot = c
+                    moved += dt != 0.0
+                    break
+            if spot is None:
+                skipped += 1
+                continue
+            placed.append(spot)
+            lo, hi = min(inner, outer), max(inner, outer)
+            if axis == "x":
+                solid = Manifold.cube((w, hi - lo + 2.0, d + 1.0)).translate(
+                    (spot - w / 2.0, lo - 1.0, z_flange - d)
                 )
             else:
-                skipped += 1
-        # left/right edges: channel at y, crossing the band in x
-        for y, (x_in, x_out) in (
-            (qy0 + t * (qy1 - qy0), (qx0, float(block_min[0]))),
-            (qy0 + t * (qy1 - qy0), (qx1, float(block_max[0]))),
-        ):
-            mid_x = (x_in + x_out) / 2.0
-            if clear_of(mid_x, y):
-                lo, hi = min(x_in, x_out), max(x_in, x_out)
-                channels.append(
-                    Manifold.cube((hi - lo + 2.0, w, d + 1.0)).translate(
-                        (lo - 1.0, y - w / 2.0, z_flange - d)
-                    )
+                solid = Manifold.cube((hi - lo + 2.0, w, d + 1.0)).translate(
+                    (lo - 1.0, spot - w / 2.0, z_flange - d)
                 )
-            else:
-                skipped += 1
+            channels.append(solid)
 
     if skipped:
         warnings.append(
-            f"{skipped} overflow channel(s) skipped to avoid pins/bolts/pry slots"
+            f"{skipped} overflow channel(s) skipped — no clear path past "
+            "pins/bolts/jack screws/pry slots on that edge"
         )
     if not channels:
         return None, None
@@ -392,6 +504,7 @@ def overflow_channel_solids(
         "width": float(w),
         "depth": float(d),
         "per_edge": int(k),
+        "slid": int(moved),
     }
     return _union(channels), info
 

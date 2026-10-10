@@ -49,6 +49,12 @@ CURE_NOTES = [
 ]
 
 
+SHELL_DROP_NOTE = (
+    "shell part: {n} body(ies) enclosed by the part removed from the tool — "
+    "on a single-sided tool the inside of the shell is the bagged side"
+)
+
+
 def build(part_man, part_bounds, z_split, params, warnings):
     """Construct a prepreg laminating tool. Returns (tool, meta, hw_meta)."""
     m = params.wall_margin_mm
@@ -76,6 +82,10 @@ def build(part_man, part_bounds, z_split, params, warnings):
             "run-out skipped"
         )
 
+    tool, dropped = mfld.keep_main_body(tool)
+    if dropped:
+        warnings.append(SHELL_DROP_NOTE.format(n=dropped))
+
     meta = {
         "flange_z": float(flange_z),
         "trim_allowance_mm": trim,
@@ -99,6 +109,11 @@ def build(part_man, part_bounds, z_split, params, warnings):
         if solid is not None:
             tool = tool - solid
             hw_meta["flange_holes"] = info
+            warnings.append(
+                "bush holes pass through the flange inside the vacuum seal — fit "
+                "the bushes/bolts or tape over the holes on the back face before "
+                "bagging, or the bag will leak through them"
+            )
     return tool, meta, hw_meta
 
 
