@@ -17,6 +17,7 @@
 - [Setup on Windows](#setup-on-windows)
 - [Setup on Linux / macOS](#setup-on-linux--macos)
 - [Using the app](#using-the-app)
+- [Command line](#command-line)
 - [Optional: STEP / IGES input](#optional-step--iges-input)
 - [Troubleshooting](#troubleshooting)
 - [For developers](#for-developers)
@@ -29,7 +30,7 @@ Whichever way you spell it — carbon fiber or carbon fibre, mold or mould — t
 
 | Mold style | What you get |
 |---|---|
-| **Compression / forged carbon** | Two-part telescoping mold — the male plug pistons into the female pocket so chopped fiber can't jam the seam. Registration pins, clamp bolt holes, pry slots, jack screws, resin overflow channels, optional ejector hole. |
+| **Compression / forged carbon** | Two-part telescoping mold — the male plug pistons into the female pocket so chopped fiber can't jam the seam. The pinch-off follows the part outline (or a rectangle, for CNC). Registration pins, clamp bolt holes, pry slots, jack screws, resin overflow channels, optional ejector hole. |
 | **Prepreg / laminating tool** | Single-sided female tool with a trim-allowance run-out (witness line to trim to), bagging flange, sealant-tape guide line, optional split-mould bush holes. |
 | **Open layup** | Basic single-sided female tool with a flat bagging flange. |
 
@@ -37,7 +38,7 @@ Before you commit plastic, the built-in **demolding check** highlights faces tha
 
 **Shell parts work.** Cups, cases, bowls and panels are handled properly: on a compression mold the inside of the shell is molded by a core built onto the male (or onto the female, for an upside-down shell); on a laminating tool the inside is left open as the bagged side. No loose cores trapped in the cavity.
 
-Also built in: a section view to inspect the closed mold, a forged-carbon charge-weight estimate and loading-volume check, shrinkage compensation, exact cavity offsets, and a one-click ZIP with every half plus a printable setup sheet.
+Also built in: a draft-angle heatmap, a section view to inspect the closed mold, a forged-carbon charge-weight estimate and loading-volume check, shrinkage compensation, exact cavity offsets, STL or 3MF export, and a one-click ZIP with every half plus a printable setup sheet. Every exported half is verified to stay a closed, manifold solid after a slicer loads it.
 
 ## Setup on Windows
 
@@ -72,13 +73,29 @@ Open **http://localhost:8000**. (If you have `make`: `make dev` does all of the 
 ## Using the app
 
 1. **Pick your process** at the top — resin print, FDM print, or CNC. This sets all the fit clearances.
-2. **Drop your model** into the viewport (STL, 3MF or OBJ, in millimeters). You'll see dimensions, a watertightness check, and a warning if the model looks like it was exported in meters.
-3. **Set the parting plane** with the slider (it starts at the auto-suggested height) and click **Analyze undercuts** — red faces will lock in the mold, amber faces will drag. Adjust until it's clean.
+2. **Drop your model** into the viewport (STL, 3MF or OBJ). Set **File units** first if it came from inch- or meter-based CAD. You'll see dimensions, volume and a watertightness check. Not lying the way you want? **Lay on face** and click the face it should rest on.
+3. **Set the parting plane** with the slider (it starts at the height suggested for your mold style; the chart under it shows where the part locks) and click **Analyze undercuts** — red faces lock, purple ones are blocked by other geometry, amber ones drag. Tick **Draft-angle map** for a continuous heatmap. Adjust until it's clean.
 4. **Pick a mold style** and tweak settings — hover anything to see what it means.
 5. **Generate mold** — inspect the halves with the explode slider, ghost-part toggle and section view; read any warnings (they tell you what was shrunk, moved or skipped, and anything about your part that will fight demolding). Compression molds also show the charge weight to load.
-6. **Download** the STL per half — or the ZIP with all halves and a setup sheet — and slice it like any other print.
+6. **Download** each half as STL or 3MF — or the ZIP with all halves and a setup sheet — and slice it like any other print.
 
-Uploaded parts and generated molds are stored in the local `workdir/` folder — nothing leaves your machine.
+Viewer shortcuts: **1** iso · **2** top · **3** front · **F** fit · **Esc** cancels lay-on-face. Settings are remembered in your browser (*Reset to defaults* at the bottom of the panel).
+
+Uploaded parts and generated molds are stored in the local `workdir/` folder — nothing leaves your machine (files untouched for 7 days are cleaned up).
+
+## Command line
+
+Installing moldgen also installs a `moldgen` command for scripting and batch work:
+
+```sh
+moldgen generate part.stl --out molds/                      # compression mold at the suggested height
+moldgen generate panel.3mf --mode prepreg --wall-margin-mm 40 --format 3mf
+moldgen generate bracket.stl --units in --parting-z 12.5 --bolts --bolt-count 8 --plug-shape rect
+moldgen analyze part.stl --mode compression                 # exit status 1 if the part locks
+moldgen serve --port 8080                                   # the web app
+```
+
+Every engine setting is an option (`moldgen generate --help`); each run writes the halves plus `moldgen-setup.txt` and `moldgen-params.json`. Add `--json` for machine-readable output.
 
 ## Optional: STEP / IGES input
 
@@ -108,7 +125,8 @@ Surfaces are tessellated on upload with adjustable precision; IGES files are sew
 
 ```sh
 .venv/bin/pip install -e ".[dev]"
-.venv/bin/python -m pytest        # ~85 tests, a few seconds
+.venv/bin/python -m pytest        # ~130 tests, a few seconds
+.venv/bin/ruff check moldgen tests && .venv/bin/ruff format --check moldgen tests
 ```
 
 ```
@@ -120,15 +138,17 @@ moldgen/
     hardware.py      pins, bolts, pry slots, jack screws, overflow, scribes
     undercuts.py     demold (normals + occlusion + shell cores) & drape analysis,
                      parting-plane suggestion and profile
-    rays.py          vectorized vertical ray casting (visibility, inside tests)
+    rays.py          vectorized vertical ray casting + point-in-polygon
     offset.py        plane-exact cavity offset
+    report.py        setup sheet text
+  cli.py           `moldgen` command (generate / analyze / serve)
     step_io.py       optional STEP/IGES tessellation (cadquery/OCP)
   main.py          FastAPI app: JSON API + static frontend
 frontend/          vanilla JS + three.js viewport (no build step)
 tests/             pytest — geometry verified by exact volume arithmetic
 ```
 
-All booleans run through [manifold3d](https://github.com/elalish/manifold) (watertight-guaranteed); trimesh handles I/O and analysis. The frontend talks to a small JSON API (`POST /api/upload`, `/api/orient`, `/api/analyze`, `/api/generate`, `GET /api/download/{id}/{half}.stl` and `/api/download/{id}/mold.zip`) — script it directly if you prefer. Units are millimeters everywhere.
+All booleans run through [manifold3d](https://github.com/elalish/manifold) (watertight-guaranteed); trimesh handles I/O and analysis. The frontend talks to a small JSON API (`POST /api/upload`, `/api/orient`, `/api/analyze`, `/api/generate`, `GET /api/download/{id}/{half}.stl|.3mf` and `/api/download/{id}/mold.zip`; interactive docs at `/docs`) — script it directly if you prefer. Units are millimeters everywhere.
 
 Known limitations: the parting surface is a flat plane (re-orient the part with *Lay on face* to choose it), the occlusion check samples one ray per triangle (dense meshes make this a non-issue), and fillets can't be added to your part automatically — the drape check tells you where they're needed.
 

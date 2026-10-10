@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Python ${{ matrix.python }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Lint
+        run: |
+          ruff check moldgen tests
+          ruff format --check moldgen tests
+      - name: Test
+        run: python -m pytest -q
+      - name: CLI smoke test
+        run: |
+          python - <<'PY'
+          import trimesh
+          trimesh.creation.icosphere(subdivisions=3, radius=20.0).export("sphere.stl")
+          PY
+          moldgen generate sphere.stl --out out --ejector-holes
+          moldgen analyze sphere.stl
+
+  frontend:
+    name: Frontend syntax
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: node --input-type=module --check < frontend/main.js

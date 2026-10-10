@@ -111,10 +111,18 @@ used for vacuum bagging tape (sealant tape sticks to the flat flange).
   (`ok`, `halves`, `errors`, `warnings`, `metadata`) — validation failures
   return errors, they don't raise.
   - `mfld.py` — trimesh ↔ manifold3d conversion (note: manifold stores
-    vertices as float32).
+    vertices as float32), `drafted_extrude` (extrude a CrossSection with
+    every wall leaning out by an EXACT offset — manifold's own extrude only
+    scales, which gives concave outlines no draft), `solid_bodies` /
+    `keep_main_body` (connected solids with their voids), `signed_area`.
   - `forged.py` — telescoping compression construction: female block minus
-    drafted pocket prism, male drafted plug + plate, lead-in funnel, and
-    flange-hardware orchestration. Errors (ValueError) when the flange band
+    drafted pocket, male drafted plug + plate, lead-in funnel, and
+    flange-hardware orchestration. The plug outline is the part's projected
+    silhouette grown by plug_border (`plug_shape="contour"`, default) or its
+    bbox rectangle ("rect"); hardware positions still use the rectangle's
+    flange band, which bounds the contour. Overflow channels run inward and
+    are clipped 1 mm inside the plug outline so they never cut a core
+    handed to the female. Errors (ValueError) when the flange band
     (margin − border − clearance − draft growth) is under 6 mm.
   - `hardware.py` — registration pins (pegs + clearance holes), clamping
     bolt through-holes with 50-75 mm spacing warning, pry slots, resin
@@ -136,6 +144,7 @@ used for vacuum bagging tape (sealant tape sticks to the flat flange).
     the `step` pyproject extra (OCP wheels are heavy). `HAS_STEP` is the
     runtime capability flag; `/api/health` reports it and the UI greys the
     formats out when missing. Never import cadquery outside this module.
+  - `report.py` — the plain-text setup sheet (ZIP bundle and CLI).
   - `undercuts.py` — `PartVisibility` (per-face ±Z ray distances, computed
     once per part; the API caches it), `analyze_undercuts` (normals +
     occlusion + shell cores by exact connectivity, `single_sided` for
@@ -143,6 +152,8 @@ used for vacuum bagging tape (sealant tape sticks to the flat flange).
     (coarse + fine scan using a cheaper core heuristic; two-part ties go to
     the middle of the tied band, single-sided `side="below"/"above"` to the
     plane covering the most part).
+- `moldgen/cli.py` — `moldgen generate|analyze|serve`; its options are
+  generated from `MoldParams` too.
 - `moldgen/main.py` — FastAPI app, serves `/api/*` and the static frontend.
   `GenerateRequest` is derived from the `MoldParams` dataclass — add new
   engine params there only. Requests reject NaN/Infinity (a NaN reaching
@@ -150,7 +161,8 @@ used for vacuum bagging tape (sealant tape sticks to the flat flange).
   Generated STLs are served `no-store` (same path rewritten on regenerate);
   `/api/download/{id}/mold.zip` bundles halves + setup sheet.
 - Tests generate primitives programmatically (no fixture files) and verify
-  mold halves by exact volume arithmetic — manifold booleans are exact on
+  mold halves by exact volume arithmetic (those tests pin
+  `plug_shape="rect"`) — manifold booleans are exact on
   the input mesh, so e.g. a z-symmetric icosphere leaves exactly half its
   volume below the parting plane.
 
@@ -166,10 +178,32 @@ vertically — that's how thin parts ended up with 40 mm-thick molds.
 
 - `make dev` — create venv if needed, install deps, run uvicorn with reload on
   http://localhost:8000 (serves API + frontend together).
-- `make test` — run pytest.
+- `make test` — run pytest; `make lint` — ruff check + format check (CI
+  runs both on Python 3.11-3.13, plus a CLI smoke test).
 - Units are millimeters throughout (STL convention).
 - `decompose()` returns internal voids as separate inside-out shells
   (negative volume) — always group with `mfld.solid_bodies` before reasoning
   about connected bodies.
 - Parting-plane nudges go INTO the part (down past a top face): nudging out
   seals the cavity under a 1 µm skin.
+
+## Export integrity (read before adding geometry)
+
+manifold3d guarantees *topological* manifoldness, but when two surfaces
+merely touch — a feature edge lying exactly on a part edge, a union of
+pieces whose faces should coincide — it emits distinct vertices at
+identical coordinates. Fine in memory; non-manifold the moment a slicer
+welds the STL. `tests/test_export_integrity.py` round-trips every half
+through STL; run a wide sweep (shapes x modes x parting heights) after any
+construction change. Patterns that avoid it:
+
+- Never build a feature from the part's own outline vertices at the same
+  height (the prepreg run-out grows its base 20 µm and turns it by an
+  irrational micro-angle). Never let cylinders share planes with a
+  revolved part's meridians (the ejector pin is rotated by √3°).
+- Build convex features as one hull (`Manifold.batch_hull`), not a union of
+  pieces that meet face to face (registration pegs).
+- Start a feature that must cross a wall slightly *inside* it rather than
+  exactly on it (lead-in funnel, `FUNNEL_INSET`).
+- Clean offset outlines before extruding (`drafted_extrude` simplifies:
+  Clipper emits points nanometres apart).

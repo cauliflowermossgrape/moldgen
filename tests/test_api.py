@@ -73,7 +73,7 @@ def test_full_flow(client):
     assert "overflow" in gen["metadata"]["hardware"]
     assert "jack_screws" in gen["metadata"]["hardware"]
     assert gen["metadata"]["forged"]["plunge_mm"] == 10.0
-    for name, info in gen["halves"].items():
+    for info in gen["halves"].values():
         assert info["watertight"] is True
         dl = client.get(info["url"])
         assert dl.status_code == 200
@@ -121,7 +121,7 @@ def test_orient_lay_on_face_and_reset(client):
     # reset restores the as-uploaded orientation
     r = client.post("/api/orient", json={"mesh_id": up["mesh_id"], "reset": True}).json()
     assert r["extents"] == pytest.approx(up["extents"], abs=1e-4)
-    for restored, uploaded in zip(r["bounds"], up["bounds"]):
+    for restored, uploaded in zip(r["bounds"], up["bounds"], strict=True):
         assert restored == pytest.approx(uploaded, abs=1e-4)
 
     # bad vectors are rejected
@@ -180,7 +180,7 @@ def test_bad_requests(client):
 
 def test_non_finite_json_is_a_readable_422(client):
     up = upload_mushroom(client)
-    body = '{"mesh_id": "%s", "parting_z_mm": 22, "plunge_mm": NaN}' % up["mesh_id"]
+    body = f'{{"mesh_id": "{up["mesh_id"]}", "parting_z_mm": 22, "plunge_mm": NaN}}'
     resp = client.post("/api/generate", content=body, headers={"content-type": "application/json"})
     assert resp.status_code == 422
     assert "plunge_mm" in resp.json()["detail"]
@@ -208,7 +208,7 @@ def test_bundle_zip_and_no_store(client):
     import zipfile
 
     up = upload_mushroom(client)
-    assert client.get("/api/download/%s/mold.zip" % up["mesh_id"]).status_code == 404
+    assert client.get(f"/api/download/{up['mesh_id']}/mold.zip").status_code == 404
     gen = client.post(
         "/api/generate",
         json={"mesh_id": up["mesh_id"], "parting_z_mm": up["suggested_parting_z_mm"]},
@@ -281,3 +281,70 @@ def test_upload_size_limit(client, monkeypatch):
     data = trimesh.exchange.stl.export_stl(trimesh.creation.icosphere())
     resp = client.post("/api/upload", files={"file": ("big.stl", data, "model/stl")})
     assert resp.status_code == 413
+
+
+@pytest.mark.parametrize("units,scale", [("in", 25.4), ("cm", 10.0)])
+def test_upload_units_scale_to_mm(client, units, scale):
+    data = trimesh.exchange.stl.export_stl(trimesh.creation.box(extents=[2.0, 1.0, 0.5]))
+    up = client.post(
+        "/api/upload",
+        files={"file": ("box.stl", data, "model/stl")},
+        data={"units": units},
+    ).json()
+    assert up["extents"] == pytest.approx([2.0 * scale, 1.0 * scale, 0.5 * scale])
+    # reset orientation re-applies the same unit conversion
+    r = client.post("/api/orient", json={"mesh_id": up["mesh_id"], "reset": True}).json()
+    assert r["extents"] == pytest.approx(up["extents"])
+    bad = client.post(
+        "/api/upload", files={"file": ("box.stl", data, "model/stl")}, data={"units": "ft"}
+    )
+    assert bad.status_code == 400
+
+
+def test_3mf_download(client):
+    import io
+
+    up = upload_mushroom(client)
+    gen = client.post(
+        "/api/generate",
+        json={"mesh_id": up["mesh_id"], "parting_z_mm": up["suggested_parting_z_mm"]},
+    ).json()
+    resp = client.get(gen["halves"]["female"]["url_3mf"])
+    assert resp.status_code == 200
+    assert resp.headers["cache-control"] == "no-store"
+    mesh = trimesh.load(io.BytesIO(resp.content), file_type="3mf", force="mesh")
+    assert mesh.is_watertight
+    assert mesh.volume == pytest.approx(gen["halves"]["female"]["volume"], rel=1e-4)
+
+
+def test_unexpected_errors_are_json(client, monkeypatch):
+    up = upload_mushroom(client)
+
+    def boom(*a, **k):
+        raise RuntimeError("kaboom")
+
+    monkeypatch.setattr(main, "analyze_undercuts", boom)
+    no_raise = TestClient(main.app, raise_server_exceptions=False)
+    resp = no_raise.post("/api/analyze", json={"mesh_id": up["mesh_id"], "parting_z_mm": 20})
+    assert resp.status_code == 500
+    assert "kaboom" in resp.json()["detail"]
+
+
+def test_analyze_returns_per_face_draft(client):
+    import base64
+
+    import numpy as np
+
+    up = upload_mushroom(client)
+    an = client.post(
+        "/api/analyze",
+        json={"mesh_id": up["mesh_id"], "parting_z_mm": up["suggested_parting_z_mm"]},
+    ).json()
+    draft = np.frombuffer(base64.b64decode(an["draft_deg_b64"]), dtype=np.int8)
+    assert len(draft) == up["triangles"]  # one byte per triangle
+    molded = draft[draft != main.DRAFT_UNMOLDED]
+    assert molded.min() >= -90 and molded.max() <= 90
+    # cylinder walls are vertical (0°); flat caps face their pull (90°)
+    assert (molded == 0).any() and (molded == 90).any()
+    # no face fights its pull at the suggested height
+    assert molded.min() >= 0

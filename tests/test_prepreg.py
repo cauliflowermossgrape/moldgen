@@ -7,6 +7,8 @@ same 64-gon manifold slices, so the run-out volume is exactly
 cross-section-area × trim allowance when the kick is zero.
 """
 
+import math
+
 import numpy as np
 import pytest
 import trimesh
@@ -148,3 +150,27 @@ def test_prepreg_param_validation():
     assert not res.ok and any("trim_kick" in e for e in res.errors)
     res = generate_mold(part, prepreg_params(trim_allowance_mm=0.0))
     assert not res.ok and any("trim_allowance" in e for e in res.errors)
+
+
+def test_kick_is_a_true_offset_on_concave_outlines():
+    # scaling about the center (the old construction) gave an L-shaped
+    # part's notch edges no kick at all; the run-out must be the outline
+    # offset by tan(kick) * height on every edge
+    from manifold3d import CrossSection, JoinType
+
+    notch = trimesh.creation.box(extents=[30.0, 30.0, 20.0])
+    notch.apply_translation([15.0, 15.0, 0.0])
+    part = trimesh.boolean.difference(
+        [trimesh.creation.box(extents=[60.0, 60.0, 10.0]), notch], engine="manifold"
+    )
+    res = generate_mold(part, MoldParams(mode="prepreg", parting_z_mm=4.9, wall_margin_mm=30.0))
+    assert res.ok, res.errors
+    tool = mfld.to_manifold(res.halves["tool"])
+    z_top = res.metadata["prepreg"]["flange_z"] - 0.05
+    big = CrossSection([[(-200, -200), (200, -200), (200, 200), (-200, 200)]])
+    opening = big - tool.slice(z_top)
+    grow = math.tan(math.radians(5.0)) * (z_top - 4.9)
+    # every edge kicked by the full amount (convex corners come out rounded,
+    # which keeps the same 5° draft round the corner)
+    ideal = mfld.to_manifold(part).slice(4.9).offset(grow, JoinType.Round, 2.0, 0)
+    assert (ideal - opening).area() < 1e-3

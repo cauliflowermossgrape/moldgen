@@ -83,7 +83,7 @@ class VerticalRayCaster:
         self._cell_start = np.concatenate(([0], np.cumsum(per_cell)))
 
     @classmethod
-    def from_mesh(cls, mesh) -> "VerticalRayCaster":
+    def from_mesh(cls, mesh) -> VerticalRayCaster:
         return cls(mesh.triangles)
 
     def first_hit(self, origins: np.ndarray, direction: float, min_dist: float = 0.0) -> np.ndarray:
@@ -157,3 +157,70 @@ class VerticalRayCaster:
                 np.minimum.at(out, rays[ok], dist[ok])
             lo = hi
         return out
+
+
+class PolygonContainment:
+    """Even-odd point-in-polygon for many points against a set of 2-D
+    contours (outer boundaries and holes alike).
+
+    Edges are bucketed by Y, so each point only tests the few edges its
+    horizontal scanline can cross — far better than triangulating the
+    region, whose fan slivers all pile into the same grid cells.
+    """
+
+    def __init__(self, contours):
+        segs = []
+        for c in contours:
+            p = np.asarray(c, dtype=np.float64).reshape(-1, 2)
+            if len(p) >= 3:
+                segs.append(np.stack([p, np.roll(p, -1, axis=0)], axis=1))
+        seg = np.concatenate(segs) if segs else np.zeros((0, 2, 2))
+        seg = seg[seg[:, 0, 1] != seg[:, 1, 1]]  # horizontal edges never cross
+        self.n = len(seg)
+        if self.n == 0:
+            return
+        self._x0, self._y0 = seg[:, 0, 0], seg[:, 0, 1]
+        self._x1, self._y1 = seg[:, 1, 0], seg[:, 1, 1]
+        lo = np.minimum(self._y0, self._y1)
+        hi = np.maximum(self._y0, self._y1)
+        self._ymin = float(lo.min())
+        span = max(float(hi.max()) - self._ymin, 1e-9)
+        self._nb = max(1, min(self.n, 65536))
+        self._h = span / self._nb
+        b0 = np.clip(((lo - self._ymin) / self._h).astype(np.int64), 0, self._nb - 1)
+        b1 = np.clip(((hi - self._ymin) / self._h).astype(np.int64), 0, self._nb - 1)
+        counts = b1 - b0 + 1
+        seg_idx = np.repeat(np.arange(self.n), counts)
+        local = np.arange(int(counts.sum())) - np.repeat(np.cumsum(counts) - counts, counts)
+        bucket = b0[seg_idx] + local
+        order = np.argsort(bucket)
+        self._entries = seg_idx[order]
+        per = np.bincount(bucket, minlength=self._nb)
+        self._start = np.concatenate(([0], np.cumsum(per)))
+
+    def contains(self, points: np.ndarray) -> np.ndarray:
+        pts = np.asarray(points, dtype=np.float64).reshape(-1, 2)
+        out = np.zeros(len(pts), dtype=bool)
+        if self.n == 0 or len(pts) == 0:
+            return out
+        b = np.floor((pts[:, 1] - self._ymin) / self._h).astype(np.int64)
+        ok = (b >= 0) & (b < self._nb)
+        ids = np.flatnonzero(ok)
+        if len(ids) == 0:
+            return out
+        starts = self._start[b[ids]]
+        k = self._start[b[ids] + 1] - starts
+        total = int(k.sum())
+        if total == 0:
+            return out
+        r = np.repeat(ids, k)
+        offs = np.arange(total) - np.repeat(np.cumsum(k) - k, k)
+        e = self._entries[np.repeat(starts, k) + offs]
+        py, px = pts[r, 1], pts[r, 0]
+        y0, y1 = self._y0[e], self._y1[e]
+        x0, x1 = self._x0[e], self._x1[e]
+        spans = (y0 <= py) != (y1 <= py)  # half-open: shared vertices count once
+        xi = x0 + (py - y0) * (x1 - x0) / (y1 - y0)
+        cross = spans & (xi > px)
+        crossings = np.bincount(r[cross], minlength=len(pts))
+        return crossings % 2 == 1
