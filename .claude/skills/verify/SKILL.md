@@ -32,7 +32,7 @@ Use a non-default port (8765) — the user may have `make dev` running on 8000.
 ## Frontend
 
 Static files served by the same server at `/`. `node --input-type=module
---check < frontend/main.js` catches syntax errors. For a real check, drive
+--check < moldgen/frontend/main.js` catches syntax errors. For a real check, drive
 it headless: node Playwright lives at `/opt/node-tools/node_modules/playwright`
 and Chromium at `/opt/pw-browsers/chromium-*/chrome-linux/chrome` (launch
 with `--use-gl=swiftshader --enable-unsafe-swiftshader` for WebGL). The

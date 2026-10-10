@@ -18,5 +18,5 @@ test: venv
 	$(PYTHON) -m pytest
 
 lint: venv
-	$(VENV)/bin/ruff check moldgen tests
-	$(VENV)/bin/ruff format --check moldgen tests
+	$(VENV)/bin/ruff check moldgen tests packaging
+	$(VENV)/bin/ruff format --check moldgen tests packaging

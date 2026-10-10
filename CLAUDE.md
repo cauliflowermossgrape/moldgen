@@ -13,10 +13,13 @@ fiber work, export the mold halves as STL for 3D printing or CNC.
   API directly) — it guarantees watertight results. Do NOT use trimesh's
   built-in booleans or Blender.
 - **Frontend**: single-page vanilla JS + three.js, loaded from CDN via an import
-  map (`frontend/index.html`). No bundler, no node_modules — FastAPI serves
-  `frontend/` directly.
+  map (`moldgen/frontend/index.html`). No bundler, no node_modules — FastAPI serves
+  `moldgen/frontend/` directly (inside the package, so wheels and the
+  packaged app ship it).
 - **Storage**: no database. Uploaded parts and generated molds live in
-  `./workdir/` (gitignored).
+  `./workdir/` (gitignored) when running from a checkout; an installed or
+  packaged app uses the per-user data dir (`main._default_workdir`;
+  `MOLDGEN_WORKDIR` overrides).
 
 ## Domain: mold styles
 
@@ -173,6 +176,22 @@ and bolts, ~14 mm minimum plus plug border). Vertical shell thickness is the
 separate `base_thickness_mm` (default 10): material under the deepest cavity
 point and above it (male plate / tool floor). Never reuse the wall margin
 vertically — that's how thin parts ended up with 40 mm-thick molds.
+
+## Packaging & releases
+
+- `packaging/build_app.py` builds the standalone app for the current OS
+  (PyInstaller, one-folder, zipped). It stages a copy of the frontend with
+  three.js VENDORED and the import map rewritten to `./vendor/three/` — the
+  packaged app must work offline; the repo frontend keeps the CDN. The
+  three.js version is read from the import map: change it there only.
+- Entry point `moldgen/desktop.py`: no args → server on a free port
+  8000-8019 + browser; args → CLI. Anything the app imports lazily or by
+  string must be bundled (`--collect-submodules` in build_app.py).
+- `packaging/smoke_test.py` runs the frozen binary (CLI + app mode).
+- `.github/workflows/release.yml`: tag `v<version>` → version check
+  (`packaging/release_notes.py --check`), tests, wheel/sdist, apps on
+  Windows / macOS arm64 / Ubuntu 22.04, GitHub Release with the CHANGELOG
+  section. Manual dispatch = test build, no release.
 
 ## Dev workflow
 

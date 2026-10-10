@@ -19,6 +19,8 @@ classifiers = [
     "Topic :: Multimedia :: Graphics :: 3D Modeling",
     "Topic :: Scientific/Engineering",
 ]
+readme = "README.md"
+license = { text = "MIT" }
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.111",
@@ -34,6 +36,11 @@ dependencies = [
     # upload surfaces as a confusing "No module named charset_normalizer"
     "charset-normalizer>=3.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/cauliflowermossgrape/moldgen"
+Changelog = "https://github.com/cauliflowermossgrape/moldgen/blob/main/CHANGELOG.md"
+Issues = "https://github.com/cauliflowermossgrape/moldgen/issues"
 
 [project.scripts]
 moldgen = "moldgen.cli:main"
@@ -52,6 +59,10 @@ step = [
 
 [tool.setuptools.packages.find]
 include = ["moldgen*"]
+
+[tool.setuptools.package-data]
+# the web UI ships inside the package so installed wheels can serve it
+moldgen = ["frontend/*", "frontend/**/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

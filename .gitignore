@@ -6,3 +6,5 @@ workdir/*
 !workdir/.gitkeep
 .pytest_cache/
 *.deb
+build/
+dist/

@@ -14,8 +14,10 @@ import dataclasses
 import io
 import json
 import logging
+import os
 import re
 import shutil
+import sys
 import threading
 import time
 import typing
@@ -45,9 +47,36 @@ from moldgen.core.io import load_part, supported_suffixes
 from moldgen.core.report import setup_sheet
 from moldgen.core.undercuts import PartVisibility, parting_summary
 
-ROOT = Path(__file__).resolve().parent.parent
-FRONTEND_DIR = ROOT / "frontend"
-WORKDIR = ROOT / "workdir"
+PACKAGE_DIR = Path(__file__).resolve().parent
+ROOT = PACKAGE_DIR.parent
+
+
+def _user_data_dir() -> Path:
+    """Per-user application data directory, following each OS's convention."""
+    if sys.platform == "win32":
+        base = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
+    elif sys.platform == "darwin":
+        base = Path.home() / "Library" / "Application Support"
+    else:
+        base = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
+    return base / "moldgen"
+
+
+def _default_workdir() -> Path:
+    """Where uploads and generated molds live: $MOLDGEN_WORKDIR if set,
+    ./workdir in a source checkout (the dev workflow), otherwise the
+    per-user data directory — an installed package or a packaged app must
+    never write inside its own (often read-only) install location."""
+    env = os.environ.get("MOLDGEN_WORKDIR")
+    if env:
+        return Path(env).expanduser()
+    if (ROOT / "pyproject.toml").is_file():
+        return ROOT / "workdir"
+    return _user_data_dir() / "workdir"
+
+
+FRONTEND_DIR = Path(os.environ.get("MOLDGEN_FRONTEND") or PACKAGE_DIR / "frontend")
+WORKDIR = _default_workdir()
 
 MESH_ID_RE = re.compile(r"^[0-9a-f]{12}$")
 DOWNLOADABLE = {"part", "female", "male", "tool"}
@@ -467,5 +496,5 @@ def download_3mf(mesh_id: str, name: str) -> Response:
     )
 
 
-WORKDIR.mkdir(exist_ok=True)
+WORKDIR.mkdir(parents=True, exist_ok=True)
 app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")

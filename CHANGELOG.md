@@ -45,6 +45,15 @@ All notable changes to moldgen. Versions follow [semantic versioning](https://se
 - Parting-plane suggestion per mold style, with an undercut-vs-height chart;
   a 1M-triangle part is analysed in seconds (was minutes).
 
+### Downloads
+- Standalone apps for Windows, macOS (Apple Silicon) and Linux — no Python
+  needed; three.js is bundled so they work offline. Built and smoke-tested
+  by the new Release workflow, which publishes them with each version tag.
+- The Python package is installable for real: the web UI now ships inside
+  it (`moldgen/frontend/`), and installed copies store uploads in the
+  per-user data directory instead of next to the code (previously an
+  installed wheel crashed on start). `moldgen app` opens it in the browser.
+
 ### App, API, CLI
 - `moldgen` command-line tool: `generate`, `analyze`, `serve`; every engine
   parameter is an option.
