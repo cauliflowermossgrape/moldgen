@@ -120,8 +120,10 @@ def cmd_generate(args: argparse.Namespace) -> int:
         "warnings": result.warnings,
         "metadata": result.metadata,
     }
-    (out / f"{args.prefix}setup.txt").write_text(setup_sheet(record))
-    (out / f"{args.prefix}params.json").write_text(json.dumps(record, indent=2))
+    # explicit UTF-8: the default is the locale's encoding (cp1252 on most
+    # Windows machines), which can't encode e.g. the "≈" in the setup sheet
+    (out / f"{args.prefix}setup.txt").write_text(setup_sheet(record), encoding="utf-8")
+    (out / f"{args.prefix}params.json").write_text(json.dumps(record, indent=2), encoding="utf-8")
     if args.json:
         print(json.dumps({"ok": True, "files": written, **record}, indent=2))
     else:
@@ -233,7 +235,19 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _tolerant_stdio() -> None:
+    """Never crash on printing. Messages contain characters like ≥, ≈ and
+    −; a Windows console renders them, but output piped or redirected there
+    uses the legacy code page (cp1252), where printing them raises. Swap
+    unencodable characters for '?' instead."""
+    for stream in (sys.stdout, sys.stderr):
+        enc = (getattr(stream, "encoding", None) or "").lower().replace("-", "")
+        if enc != "utf8" and hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="replace")
+
+
 def main(argv: list[str] | None = None) -> int:
+    _tolerant_stdio()
     args = build_parser().parse_args(argv)
     try:
         return args.func(args)
