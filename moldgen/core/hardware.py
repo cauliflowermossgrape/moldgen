@@ -84,9 +84,9 @@ def registration_pins(block_min, block_max, z_plane, inset, params, warnings):
 
     pegs, holes = [], []
     for x, y in corners:
-        shaft = Manifold.cylinder(
-            PEG_EMBED + h - c, r, r, CIRCULAR_SEGMENTS
-        ).translate((x, y, z_plane - PEG_EMBED))
+        shaft = Manifold.cylinder(PEG_EMBED + h - c, r, r, CIRCULAR_SEGMENTS).translate(
+            (x, y, z_plane - PEG_EMBED)
+        )
         if c > 0:
             chamfer = Manifold.cylinder(c, r, r - c, CIRCULAR_SEGMENTS).translate(
                 (x, y, z_plane + h - c)
@@ -96,7 +96,9 @@ def registration_pins(block_min, block_max, z_plane, inset, params, warnings):
             pegs.append(shaft)
         holes.append(
             Manifold.cylinder(
-                PEG_EMBED + h + HOLE_OVERDEPTH, r + clearance, r + clearance,
+                PEG_EMBED + h + HOLE_OVERDEPTH,
+                r + clearance,
+                r + clearance,
                 CIRCULAR_SEGMENTS,
             ).translate((x, y, z_plane - PEG_EMBED))
         )
@@ -122,8 +124,7 @@ def bolt_holes(block_min, block_max, inset, params, pin_info, warnings):
     r = params.bolt_diameter_mm / 2.0 + BOLT_RADIAL_CLEARANCE
     if r > inset - RING_CLEARANCE:
         warnings.append(
-            f"flange band too narrow for {params.bolt_diameter_mm:g} mm "
-            "bolt holes; bolts skipped"
+            f"flange band too narrow for {params.bolt_diameter_mm:g} mm bolt holes; bolts skipped"
         )
         return None, None
 
@@ -149,10 +150,7 @@ def bolt_holes(block_min, block_max, inset, params, pin_info, warnings):
             x, y = a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])
             if pin_info is not None:
                 min_gap = r + pin_info["radius"] + pin_info["clearance"] + 1.0
-                if any(
-                    math.hypot(x - px, y - py) < min_gap
-                    for px, py in pin_info["centers"]
-                ):
+                if any(math.hypot(x - px, y - py) < min_gap for px, py in pin_info["centers"]):
                     warnings.append(
                         f"bolt hole at ({x:.1f}, {y:.1f}) too close to a "
                         "registration pin; that hole skipped"
@@ -170,8 +168,7 @@ def bolt_holes(block_min, block_max, inset, params, pin_info, warnings):
     z0 = float(block_min[2]) - 1.0
     height = float(block_max[2] - block_min[2]) + 2.0
     cylinders = [
-        Manifold.cylinder(height, r, r, CIRCULAR_SEGMENTS).translate((x, y, z0))
-        for x, y in kept
+        Manifold.cylinder(height, r, r, CIRCULAR_SEGMENTS).translate((x, y, z0)) for x, y in kept
     ]
     info = {
         "centers": [[float(x), float(y)] for x, y in kept],
@@ -223,8 +220,7 @@ def jack_screw_holes(block_min, block_max, inset, params, avoid, warnings):
     z0 = float(block_min[2])  # generous span; only the male plate intersects it
     height = float(block_max[2] - block_min[2]) + 2.0
     holes = [
-        Manifold.cylinder(height, r, r, CIRCULAR_SEGMENTS).translate((x, y, z0))
-        for x, y in kept
+        Manifold.cylinder(height, r, r, CIRCULAR_SEGMENTS).translate((x, y, z0)) for x, y in kept
     ]
     info = {
         "centers": [[float(x), float(y)] for x, y in kept],
@@ -260,7 +256,10 @@ def ejector_hole(block_min, part_mesh, z_split, params, warnings, preferred_xy=N
     z_floor = float(part_mesh.bounds[0][2]) - 1.0
     ring = np.array(
         [[0.0, 0.0]]
-        + [[math.cos(a) * r, math.sin(a) * r] for a in np.linspace(0, 2 * math.pi, 12, endpoint=False)]
+        + [
+            [math.cos(a) * r, math.sin(a) * r]
+            for a in np.linspace(0, 2 * math.pi, 12, endpoint=False)
+        ]
     )
 
     def landing(xy):
@@ -309,8 +308,7 @@ def ejector_hole(block_min, part_mesh, z_split, params, warnings, preferred_xy=N
             )
             return hole, {"center": [x, y], "radius": float(r), "top_z": top}
     warnings.append(
-        f"no spot on the part's underside fits a {2 * r:g} mm ejector pin; "
-        "ejector hole skipped"
+        f"no spot on the part's underside fits a {2 * r:g} mm ejector pin; ejector hole skipped"
     )
     return None, None
 
@@ -346,7 +344,10 @@ def pry_slot_solids(block_min, block_max, z_flange, params, avoid, warnings):
             ok = True
             for ax, ay, ar in avoid:
                 along, across = (ax, ay) if axis == "x" else (ay, ax)
-                if abs(c - along) < width / 2.0 + ar + 1.5 and n_lo - ar - 1.5 <= across <= n_hi + ar + 1.5:
+                if (
+                    abs(c - along) < width / 2.0 + ar + 1.5
+                    and n_lo - ar - 1.5 <= across <= n_hi + ar + 1.5
+                ):
                     ok = False
                     break
             if ok:
@@ -428,9 +429,7 @@ def _segment_clear(p0, p1, avoid, pad) -> bool:
 _SLIDES = (0.0, 0.04, -0.04, 0.08, -0.08, 0.12, -0.12, 0.16, -0.16, 0.22, -0.22)
 
 
-def overflow_channel_solids(
-    block_min, block_max, z_flange, pocket_rect, params, avoid, warnings
-):
+def overflow_channel_solids(block_min, block_max, z_flange, pocket_rect, params, avoid, warnings):
     """Resin overflow channels on the female flange face.
 
     Shallow grooves running straight out from the pocket wall (where the
@@ -520,12 +519,14 @@ def _v_groove_rect(x0, y0, x1, y1, z, depth):
     s = depth * math.sqrt(2.0)  # square side whose half-diagonal equals depth
     lx = (x1 - x0) + 2.0 * depth  # run past the corners so the loop closes
     ly = (y1 - y0) + 2.0 * depth
-    return _union([
-        Manifold.cube((lx, s, s), True).rotate((45.0, 0.0, 0.0)).translate((cx, y0, z)),
-        Manifold.cube((lx, s, s), True).rotate((45.0, 0.0, 0.0)).translate((cx, y1, z)),
-        Manifold.cube((s, ly, s), True).rotate((0.0, 45.0, 0.0)).translate((x0, cy, z)),
-        Manifold.cube((s, ly, s), True).rotate((0.0, 45.0, 0.0)).translate((x1, cy, z)),
-    ])
+    return _union(
+        [
+            Manifold.cube((lx, s, s), True).rotate((45.0, 0.0, 0.0)).translate((cx, y0, z)),
+            Manifold.cube((lx, s, s), True).rotate((45.0, 0.0, 0.0)).translate((cx, y1, z)),
+            Manifold.cube((s, ly, s), True).rotate((0.0, 45.0, 0.0)).translate((x0, cy, z)),
+            Manifold.cube((s, ly, s), True).rotate((0.0, 45.0, 0.0)).translate((x1, cy, z)),
+        ]
+    )
 
 
 def trim_groove_solid(part_bounds, block_min, block_max, z_split, params, warnings):
@@ -571,8 +572,7 @@ def tape_line_solid(block_min, block_max, part_bounds, z_face, params, warnings)
     (px0, py0, _), (px1, py1, _) = part_bounds
     if x0 > px0 - RING_CLEARANCE or y0 > py0 - RING_CLEARANCE:
         warnings.append(
-            f"flange too narrow for a {tz:g} mm tape zone scribe; skipped "
-            "(increase wall_margin_mm)"
+            f"flange too narrow for a {tz:g} mm tape zone scribe; skipped (increase wall_margin_mm)"
         )
         return None, None
     info = {

@@ -49,8 +49,7 @@ def _prism(cx, cy, w, h, z0, height, grow_per_side=0.0):
     return Manifold.extrude(cs, height, 0, 0.0, scale).translate((cx, cy, z0))
 
 
-def build(part_man, part_bounds, z_split, params, warnings, part_mesh=None,
-          part_centroid_xy=None):
+def build(part_man, part_bounds, z_split, params, warnings, part_mesh=None, part_centroid_xy=None):
     """Construct the female and male halves of a telescoping mold.
 
     Returns (female, male, meta, hw_meta). Raises ValueError when the
@@ -85,14 +84,15 @@ def build(part_man, part_bounds, z_split, params, warnings, part_mesh=None,
 
     # --- female: solid to the flange, minus drafted pocket, minus part -----
     pocket = _prism(
-        cx, cy, plug_w + 2.0 * clear, plug_h + 2.0 * clear,
-        z_split, plunge + 1.0, (plunge + 1.0) * draft_slope,
+        cx,
+        cy,
+        plug_w + 2.0 * clear,
+        plug_h + 2.0 * clear,
+        z_split,
+        plunge + 1.0,
+        (plunge + 1.0) * draft_slope,
     )
-    female = (
-        mfld.box(block_min, (block_max[0], block_max[1], z_flange))
-        - pocket
-        - part_man
-    )
+    female = mfld.box(block_min, (block_max[0], block_max[1], z_flange)) - pocket - part_man
 
     # lead-in funnel at the pocket mouth (EC: 1 mm horizontal, 2 mm vertical)
     li = float(params.lead_in_mm)
@@ -102,8 +102,12 @@ def build(part_man, part_bounds, z_split, params, warnings, part_mesh=None,
         base_grow = clear + (plunge - lv) * draft_slope  # pocket size at funnel base
         funnel_h = lv + 0.5
         funnel = _prism(
-            cx, cy, plug_w + 2.0 * base_grow, plug_h + 2.0 * base_grow,
-            z_flange - lv, funnel_h,
+            cx,
+            cy,
+            plug_w + 2.0 * base_grow,
+            plug_h + 2.0 * base_grow,
+            z_flange - lv,
+            funnel_h,
             (li + lv * draft_slope) * funnel_h / lv,
         )
         female = female - funnel
@@ -141,8 +145,7 @@ def build(part_man, part_bounds, z_split, params, warnings, part_mesh=None,
             male = male - pin_holes
             hw_meta["pins"] = pin_info
             avoid += [
-                (x, y, pin_info["radius"] + pin_info["clearance"])
-                for x, y in pin_info["centers"]
+                (x, y, pin_info["radius"] + pin_info["clearance"]) for x, y in pin_info["centers"]
             ]
 
     if params.bolts:
@@ -250,9 +253,7 @@ def transfer_cores(female, male, z_split, warnings):
             "male to the female, which molds the inside surface"
         )
     if info["voids_dropped"]:
-        warnings.append(
-            "part has sealed internal voids; they can't be molded and were ignored"
-        )
+        warnings.append("part has sealed internal voids; they can't be molded and were ignored")
     return female, male, info
 
 

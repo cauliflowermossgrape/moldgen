@@ -23,8 +23,12 @@ def cylinder():
 
 def prepreg_params(**kw):
     base = dict(
-        mode="prepreg", parting_z_mm=0.0, wall_margin_mm=MARGIN,
-        keep_side="below", trim_allowance_mm=TRIM, trim_kick_deg=0.0,
+        mode="prepreg",
+        parting_z_mm=0.0,
+        wall_margin_mm=MARGIN,
+        keep_side="below",
+        trim_allowance_mm=TRIM,
+        trim_kick_deg=0.0,
         tape_line=False,
     )
     base.update(kw)
@@ -119,6 +123,7 @@ def test_flange_bush_holes():
     assert 20.0 <= from_cavity_edge <= 25.0
 
     from moldgen.core.hardware import CIRCULAR_SEGMENTS
+
     area = 0.5 * CIRCULAR_SEGMENTS * np.sin(2 * np.pi / CIRCULAR_SEGMENTS) * info["radius"] ** 2
     height = (15.0 + 10.0) + TRIM  # block bottom (base thickness) to flange face
     removed = plain.halves["tool"].volume - tool.volume

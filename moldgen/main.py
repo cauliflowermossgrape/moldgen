@@ -203,9 +203,7 @@ async def upload(
     except Exception as exc:
         shutil.rmtree(mesh_dir, ignore_errors=True)
         raise HTTPException(status_code=400, detail=f"could not read {file.filename}: {exc}")
-    (mesh_dir / "upload.json").write_text(
-        json.dumps({"filename": file.filename, **deflection})
-    )
+    (mesh_dir / "upload.json").write_text(json.dumps({"filename": file.filename, **deflection}))
     export_stl(mesh, mesh_dir / "part.stl")
     mesh = trimesh.load(mesh_dir / "part.stl")  # canonical face order from here on
     return {"filename": file.filename, **_part_stats(mesh_id, mesh)}
@@ -274,9 +272,7 @@ def orient(req: OrientRequest) -> dict:
         if meta_path.exists():
             meta = json.loads(meta_path.read_text())
             deflection = {
-                k: meta[k]
-                for k in ("linear_deflection_mm", "angular_deflection_deg")
-                if k in meta
+                k: meta[k] for k in ("linear_deflection_mm", "angular_deflection_deg") if k in meta
             }
         mesh = load_part(original, **deflection)
     else:
@@ -287,9 +283,7 @@ def orient(req: OrientRequest) -> dict:
         if norm < 1e-9:
             raise HTTPException(status_code=400, detail="down must be non-zero")
         mesh = trimesh.load(part_path)
-        mesh.apply_transform(
-            trimesh.geometry.align_vectors(down / norm, [0.0, 0.0, -1.0])
-        )
+        mesh.apply_transform(trimesh.geometry.align_vectors(down / norm, [0.0, 0.0, -1.0]))
         center = mesh.bounds.mean(axis=0)
         mesh.apply_translation([-center[0], -center[1], -mesh.bounds[0][2]])
     export_stl(mesh, part_path)
@@ -421,8 +415,7 @@ def setup_sheet(record: dict) -> str:
     lines += ["", "Files:"]
     for name, h in meta["halves"].items():
         lines.append(
-            f"  moldgen-{name}.stl  {h['volume'] / 1000:.0f} cm³, "
-            f"{h['triangles']:,} triangles"
+            f"  moldgen-{name}.stl  {h['volume'] / 1000:.0f} cm³, {h['triangles']:,} triangles"
         )
     forged = meta.get("forged")
     if forged:

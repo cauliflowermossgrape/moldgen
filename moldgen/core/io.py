@@ -37,8 +37,7 @@ def load_part(
         return step_io.load_cad(path, linear_deflection_mm, angular_deflection_deg)
     if suffix not in MESH_SUFFIXES:
         raise ValueError(
-            f"unsupported file type {suffix!r}; "
-            f"expected one of {sorted(supported_suffixes())}"
+            f"unsupported file type {suffix!r}; expected one of {sorted(supported_suffixes())}"
         )
     loaded = trimesh.load(path, force="mesh")
     if not isinstance(loaded, trimesh.Trimesh) or loaded.is_empty:

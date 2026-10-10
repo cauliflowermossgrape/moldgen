@@ -34,8 +34,12 @@ def compression(**kw):
 def bare(**kw):
     """Everything optional off, no draft/lead-in: exact prism arithmetic."""
     base = dict(
-        plug_draft_deg=0.0, lead_in_mm=0.0,
-        pins=False, pry_slots=False, overflow_channels=False, jack_screws=False,
+        plug_draft_deg=0.0,
+        lead_in_mm=0.0,
+        pins=False,
+        pry_slots=False,
+        overflow_channels=False,
+        jack_screws=False,
     )
     base.update(kw)
     return compression(**base)
@@ -62,8 +66,10 @@ def test_male_plug_fits_inside_female_pocket():
         # z=z_flange), so the probe slab must include those
         v = mesh.vertices
         mask = (
-            (v[:, 2] > -0.5) & (v[:, 2] < Z_FLANGE + 0.5)
-            & (np.abs(v[:, 0]) > lo) & (np.abs(v[:, 0]) < hi)
+            (v[:, 2] > -0.5)
+            & (v[:, 2] < Z_FLANGE + 0.5)
+            & (np.abs(v[:, 0]) > lo)
+            & (np.abs(v[:, 0]) < hi)
         )
         assert mask.any()
         return pick(np.abs(v[mask, 0]))
@@ -100,7 +106,10 @@ def test_pins_present_by_default():
     assert female.bounds[1][2] == pytest.approx(Z_FLANGE + info["height"], abs=1e-3)
     for center in info["centers"]:
         r_meas = max_radius(
-            female, center, Z_FLANGE + 0.05, Z_FLANGE + info["height"],
+            female,
+            center,
+            Z_FLANGE + 0.05,
+            Z_FLANGE + info["height"],
             info["radius"] + 1.0,
         )
         assert r_meas == pytest.approx(info["radius"], abs=1e-3)
@@ -122,12 +131,18 @@ def test_peg_hole_radii_differ_by_exact_clearance(clearance):
     center = info["centers"][0]
 
     r_peg = max_radius(
-        res.halves["female"], center,
-        Z_FLANGE + 0.05, Z_FLANGE + h - c + 0.01, r + 1.0,
+        res.halves["female"],
+        center,
+        Z_FLANGE + 0.05,
+        Z_FLANGE + h - c + 0.01,
+        r + 1.0,
     )
     r_hole = max_radius(
-        res.halves["male"], center,
-        Z_FLANGE + 0.05, Z_FLANGE + h + HOLE_OVERDEPTH + 0.1, r + clearance + 1.0,
+        res.halves["male"],
+        center,
+        Z_FLANGE + 0.05,
+        Z_FLANGE + h + HOLE_OVERDEPTH + 0.1,
+        r + clearance + 1.0,
     )
     assert r_peg == pytest.approx(r, abs=1e-3)
     assert r_hole - r_peg == pytest.approx(clearance, abs=1e-3)
@@ -157,9 +172,7 @@ def test_pins_skipped_when_band_tiny():
 def test_bolt_holes_volume_and_count():
     part = sphere()
     plain = generate_mold(part, bare())
-    bolted = generate_mold(
-        part, bare(bolts=True, bolt_count=4, bolt_diameter_mm=6.0)
-    )
+    bolted = generate_mold(part, bare(bolts=True, bolt_count=4, bolt_diameter_mm=6.0))
     assert bolted.ok, bolted.errors
     assert all(h.is_watertight for h in bolted.halves.values())
 
@@ -309,9 +322,7 @@ def test_demold_warnings():
     mushroom = mfld.to_trimesh(mfld.to_manifold(stem) + mfld.to_manifold(cap))
     res = generate_mold(mushroom, bare(parting_z_mm=10.0))
     assert res.ok
-    assert any(
-        "undercut" in w and "male" in w and "lock" in w for w in res.warnings
-    )
+    assert any("undercut" in w and "male" in w and "lock" in w for w in res.warnings)
 
     # check can be disabled
     res = generate_mold(box(), bare(demold_check=False))
@@ -349,14 +360,15 @@ def test_lead_in_widens_pocket_mouth():
 
 def test_trim_groove():
     part = sphere()
-    plain = generate_mold(
-        part, MoldParams(mode="open_layup", parting_z_mm=0.0, keep_side="below")
-    )
+    plain = generate_mold(part, MoldParams(mode="open_layup", parting_z_mm=0.0, keep_side="below"))
     grooved = generate_mold(
         part,
         MoldParams(
-            mode="open_layup", parting_z_mm=0.0, keep_side="below",
-            trim_groove=True, trim_groove_offset_mm=8.0,
+            mode="open_layup",
+            parting_z_mm=0.0,
+            keep_side="below",
+            trim_groove=True,
+            trim_groove_offset_mm=8.0,
         ),
     )
     assert grooved.ok, grooved.errors
