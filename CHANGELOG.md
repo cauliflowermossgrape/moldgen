@@ -2,6 +2,16 @@
 
 All notable changes to moldgen. Versions follow [semantic versioning](https://semver.org/).
 
+## 0.2.1
+
+Everything in 0.2.0 (below), plus the fix that let its Windows build ship:
+
+- **Windows:** `moldgen generate` crashed while writing the setup sheet —
+  files were written in the system's legacy encoding (cp1252), which can't
+  represent characters like "≈". All files are now written as UTF-8, and
+  console output never crashes on characters the console can't show.
+- The test suite now also runs on Windows for every pull request.
+
 ## 0.2.0
 
 ### Mold construction
