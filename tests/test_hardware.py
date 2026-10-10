@@ -12,7 +12,7 @@ import pytest
 import trimesh
 
 from moldgen.core import MoldParams, generate_mold
-from moldgen.core.hardware import CIRCULAR_SEGMENTS, HOLE_OVERDEPTH, PRY_REACH
+from moldgen.core.hardware import CIRCULAR_SEGMENTS, HOLE_OVERDEPTH
 
 PLUNGE = 10.0
 Z_FLANGE = PLUNGE  # all tests part at z=0
@@ -36,6 +36,7 @@ def bare(**kw):
     base = dict(
         plug_draft_deg=0.0,
         lead_in_mm=0.0,
+        plug_shape="rect",
         pins=False,
         pry_slots=False,
         overflow_channels=False,

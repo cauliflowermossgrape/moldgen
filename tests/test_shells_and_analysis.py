@@ -264,3 +264,44 @@ def test_loading_volume_warning_for_thick_parts():
     assert any("loading volume" in w for w in res.warnings)
     deeper = generate_mold(sphere, MoldParams(mode="compression", parting_z_mm=0.0, plunge_mm=30.0))
     assert not any("loading volume" in w for w in deeper.warnings)
+
+
+def test_draft_angles_are_relative_to_the_molding_half():
+    # a frustum narrowing upward, split at mid height: the same wall angle
+    # reads as negative draft in the female (wide bottom locks in a cavity
+    # that narrows upward) and positive in the male (pulls straight off)
+    full = trimesh.creation.cone(radius=20.0, height=40.0, sections=64)
+    keep = trimesh.creation.box(extents=[100.0, 100.0, 20.0])
+    keep.apply_translation([0, 0, 10.0])
+    cone = trimesh.boolean.intersection([full, keep], engine="manifold")  # z 0..20
+    report = analyze_undercuts(cone, 10.0)
+    walls = np.abs(cone.face_normals[:, 2]) < 0.99
+    expected = np.degrees(np.arctan(20.0 / 40.0))  # half-angle of the cone
+    below = cone.triangles_center[:, 2] < 10.0
+    # female walls face up-and-out: they fight the −Z pull (negative draft)
+    assert np.allclose(report.face_draft_deg[walls & below], -expected, atol=0.5)
+    # male walls face up-and-out too: +Z pull releases them
+    assert np.allclose(report.face_draft_deg[walls & ~below], expected, atol=0.5)
+
+
+def test_ejector_found_on_dense_ring():
+    # the nearest few hundred downward faces of a dense torus all sit on its
+    # steep inner rim; the search must still reach the flat underside
+    torus = trimesh.creation.torus(
+        major_radius=40.0, minor_radius=12.0, major_sections=320, minor_sections=240
+    )
+    res = generate_mold(
+        torus,
+        MoldParams(
+            mode="compression",
+            parting_z_mm=0.0,
+            ejector_holes=True,
+            pins=False,
+            pry_slots=False,
+            overflow_channels=False,
+            jack_screws=False,
+        ),
+    )
+    assert res.ok, res.errors
+    x, y = res.metadata["hardware"]["ejector"]["center"]
+    assert 28.0 + 3.0 < math.hypot(x, y) < 52.0 - 3.0  # on the tube's underside

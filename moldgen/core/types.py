@@ -51,9 +51,10 @@ class MoldParams:
     Hardware (see hardware.py; features that don't fit are shrunk or skipped
     with a warning, never a hard failure):
 
-    plunge_mm / plug_border_mm / plug_clearance_mm / plug_draft_deg /
-    lead_in_mm:
-        The telescoping section. The plug face is the part bbox grown by
+    plunge_mm / plug_shape / plug_border_mm / plug_clearance_mm /
+    plug_draft_deg / lead_in_mm:
+        The telescoping section. The plug face is the part's outline
+        (plug_shape="contour") or its bounding rectangle ("rect") grown by
         plug_border_mm; the female pocket is the plug grown by
         plug_clearance_mm per side (the pinch-off gap: 0.1 machined, 0.15
         resin-printed, 0.25-0.3 FDM). Both walls share plug_draft_deg of
@@ -121,6 +122,9 @@ class MoldParams:
     # the fiber charge), ~0.1 mm wall gap on machined tools as the resin
     # escape path, 1 mm x 2 mm lead-in chamfer at the pocket mouth.
     plunge_mm: float = 10.0
+    # "contour": plug/pocket follow the part outline grown by plug_border_mm;
+    # "rect": its bounding rectangle
+    plug_shape: str = "contour"
     plug_border_mm: float = 8.0
     plug_clearance_mm: float = 0.15
     plug_draft_deg: float = 1.0

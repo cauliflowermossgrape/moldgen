@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "moldgen"
-version = "0.1.0"
+version = "0.2.0"
 description = "Generate 3D-printable / CNC molds for carbon fiber work: forged carbon compression moulds, prepreg laminating tools and open-layup tools from STL/3MF/OBJ/STEP parts"
 keywords = [
     "carbon-fiber", "carbon-fibre", "forged-carbon", "mold", "mould",
@@ -35,10 +35,14 @@ dependencies = [
     "charset-normalizer>=3.0",
 ]
 
+[project.scripts]
+moldgen = "moldgen.cli:main"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
     "httpx>=0.27",
+    "ruff>=0.6",
 ]
 # STEP/IGES input via OpenCascade — the OCP wheel is several hundred MB,
 # hence opt-in

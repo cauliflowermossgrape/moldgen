@@ -16,8 +16,7 @@ import numpy as np
 import pytest
 import trimesh
 
-from moldgen.core import MoldParams, generate_mold, export_stl
-from moldgen.core import mfld
+from moldgen.core import MoldParams, export_stl, generate_mold, mfld
 
 MARGIN = 15.0
 BASE = 10.0  # default base_thickness_mm
@@ -38,6 +37,7 @@ def bare_forged(**kw):
         plug_clearance_mm=CLEARANCE,
         plug_draft_deg=0.0,
         lead_in_mm=0.0,
+        plug_shape="rect",
         pins=False,
         pry_slots=False,
         overflow_channels=False,
@@ -211,3 +211,16 @@ def test_export_stl_binary(tmp_path):
     assert len(data) == 84 + 50 * len(box.faces)
     reloaded = trimesh.load(path)
     assert reloaded.volume == pytest.approx(box.volume)
+
+
+def test_internal_failure_becomes_structured_error(monkeypatch):
+    # generate_mold never raises: a bug deep in the pipeline is reported
+    from moldgen.core import forged
+
+    def boom(*a, **k):
+        raise RuntimeError("kaboom")
+
+    monkeypatch.setattr(forged, "build", boom)
+    res = generate_mold(trimesh.creation.box(extents=[10.0, 10.0, 10.0]), bare_forged())
+    assert not res.ok
+    assert "internal error" in res.errors[0] and "kaboom" in res.errors[0]

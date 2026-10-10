@@ -1,7 +1,7 @@
 VENV ?= .venv
 PYTHON := $(VENV)/bin/python
 
-.PHONY: dev test venv
+.PHONY: dev test lint venv
 
 $(VENV)/bin/activate: pyproject.toml
 	python3 -m venv $(VENV)
@@ -16,3 +16,7 @@ dev: venv
 
 test: venv
 	$(PYTHON) -m pytest
+
+lint: venv
+	$(VENV)/bin/ruff check moldgen tests
+	$(VENV)/bin/ruff format --check moldgen tests
