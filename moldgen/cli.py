@@ -3,6 +3,7 @@
     moldgen generate part.stl --mode compression --out molds/
     moldgen generate bracket.step --units in --parting-z 12.5 --bolts --bolt-count 8
     moldgen analyze part.stl --mode prepreg
+    moldgen app                 # start the web app and open the browser
     moldgen serve --port 8000
 
 Every engine parameter is an option, generated from the MoldParams
@@ -169,6 +170,12 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     return 0 if all(h.likely_demoldable for h in halves.values()) else 1
 
 
+def cmd_app(args: argparse.Namespace) -> int:
+    from moldgen.desktop import run_app
+
+    return run_app()
+
+
 def cmd_serve(args: argparse.Namespace) -> int:
     import uvicorn
 
@@ -215,6 +222,9 @@ def build_parser() -> argparse.ArgumentParser:
     ana.add_argument("--keep-side", choices=("below", "above"), default="below")
     ana.add_argument("--min-draft-deg", type=float, default=1.0)
     ana.set_defaults(func=cmd_analyze)
+
+    app = sub.add_parser("app", help="start the web app and open it in your browser")
+    app.set_defaults(func=cmd_app)
 
     srv = sub.add_parser("serve", help="run the web app")
     srv.add_argument("--host", default="127.0.0.1")

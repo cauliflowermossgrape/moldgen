@@ -1,0 +1,121 @@
+name: Release
+
+# Push a version tag (git tag v0.2.0 && git push origin v0.2.0) to build
+# everything and publish a GitHub Release. "Run workflow" on the Actions tab
+# does a test build: same jobs, artifacts downloadable from the run, no
+# release.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Check version & test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install -e ".[dev]"
+      - name: Tag, package version and CHANGELOG agree
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            python packaging/release_notes.py --check "$GITHUB_REF_NAME"
+          else
+            python packaging/release_notes.py --check
+          fi
+      - run: ruff check moldgen tests packaging && ruff format --check moldgen tests packaging
+      - run: python -m pytest -q
+
+  python-package:
+    name: Python package
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install build twine
+      - run: python -m build
+      - run: twine check dist/*
+      - name: Installed wheel serves the app
+        run: |
+          python -m venv /tmp/wheelenv
+          /tmp/wheelenv/bin/pip install dist/*.whl
+          cd /tmp && MOLDGEN_WORKDIR=/tmp/wd /tmp/wheelenv/bin/python -c "
+          import moldgen.main as m
+          assert (m.FRONTEND_DIR / 'index.html').is_file(), m.FRONTEND_DIR
+          print('wheel ok:', m.FRONTEND_DIR)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: python-package
+          path: dist/*
+          if-no-files-found: error
+
+  app:
+    name: App (${{ matrix.label }})
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, label: Windows x64 }
+          - { os: macos-14, label: macOS Apple Silicon }
+          # 22.04's older glibc keeps the binary running on older distros
+          - { os: ubuntu-22.04, label: Linux x64 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install . "pyinstaller>=6.10,<7"
+      - name: Build
+        run: python packaging/build_app.py
+      - name: Smoke test the frozen app
+        run: python packaging/smoke_test.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-${{ matrix.os }}
+          path: dist/*.zip
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [python-package, app]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - run: ls -la dist
+      - run: python packaging/release_notes.py "$GITHUB_REF_NAME" > notes.md
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "moldgen ${GITHUB_REF_NAME#v}" \
+            --notes-file notes.md \
+            --verify-tag

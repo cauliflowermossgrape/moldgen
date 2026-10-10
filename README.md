@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="frontend/logo.svg" width="88" alt="moldgen logo" />
+  <img src="moldgen/frontend/logo.svg" width="88" alt="moldgen logo" />
 </p>
 
 <h1 align="center">moldgen</h1>
@@ -14,6 +14,7 @@
 ---
 
 - [What it does](#what-it-does)
+- [Download (no Python needed)](#download-no-python-needed)
 - [Setup on Windows](#setup-on-windows)
 - [Setup on Linux / macOS](#setup-on-linux--macos)
 - [Using the app](#using-the-app)
@@ -39,6 +40,20 @@ Before you commit plastic, the built-in **demolding check** highlights faces tha
 **Shell parts work.** Cups, cases, bowls and panels are handled properly: on a compression mold the inside of the shell is molded by a core built onto the male (or onto the female, for an upside-down shell); on a laminating tool the inside is left open as the bagged side. No loose cores trapped in the cavity.
 
 Also built in: a draft-angle heatmap, a section view to inspect the closed mold, a forged-carbon charge-weight estimate and loading-volume check, shrinkage compensation, exact cavity offsets, STL or 3MF export, and a one-click ZIP with every half plus a printable setup sheet. Every exported half is verified to stay a closed, manifold solid after a slicer loads it.
+
+## Download (no Python needed)
+
+Grab the zip for your computer from the [latest release](https://github.com/cauliflowermossgrape/moldgen/releases/latest):
+
+| System | File |
+|---|---|
+| Windows 10/11 (64-bit) | `moldgen-<version>-windows-x64.zip` |
+| macOS on Apple Silicon (M1 and later) | `moldgen-<version>-macos-arm64.zip` |
+| Linux (64-bit, Ubuntu 22.04 or newer and equivalents) | `moldgen-<version>-linux-x64.zip` |
+
+Unzip it anywhere and start **moldgen** inside the folder: a small window shows the address and the app opens in your browser — close the window to quit. It works offline. The apps aren't code-signed yet, so the first start needs one extra click: on Windows *More info → Run anyway*, on macOS right-click → *Open*. `README.txt` in the zip has the details.
+
+Intel Macs and everyone who prefers Python: use the setup below, or `pip install` the `.whl` from the release and run `moldgen app`.
 
 ## Setup on Windows
 
@@ -126,7 +141,7 @@ Surfaces are tessellated on upload with adjustable precision; IGES files are sew
 ```sh
 .venv/bin/pip install -e ".[dev]"
 .venv/bin/python -m pytest        # ~130 tests, a few seconds
-.venv/bin/ruff check moldgen tests && .venv/bin/ruff format --check moldgen tests
+.venv/bin/ruff check moldgen tests packaging && .venv/bin/ruff format --check moldgen tests packaging
 ```
 
 ```
@@ -141,16 +156,27 @@ moldgen/
     rays.py          vectorized vertical ray casting + point-in-polygon
     offset.py        plane-exact cavity offset
     report.py        setup sheet text
-  cli.py           `moldgen` command (generate / analyze / serve)
+  cli.py           `moldgen` command (generate / analyze / app / serve)
+  desktop.py       entry point of the packaged app
+  frontend/        vanilla JS + three.js viewport (no build step)
+packaging/         standalone-app build, smoke test, release notes
     step_io.py       optional STEP/IGES tessellation (cadquery/OCP)
   main.py          FastAPI app: JSON API + static frontend
-frontend/          vanilla JS + three.js viewport (no build step)
 tests/             pytest — geometry verified by exact volume arithmetic
 ```
 
 All booleans run through [manifold3d](https://github.com/elalish/manifold) (watertight-guaranteed); trimesh handles I/O and analysis. The frontend talks to a small JSON API (`POST /api/upload`, `/api/orient`, `/api/analyze`, `/api/generate`, `GET /api/download/{id}/{half}.stl|.3mf` and `/api/download/{id}/mold.zip`; interactive docs at `/docs`) — script it directly if you prefer. Units are millimeters everywhere.
 
 Known limitations: the parting surface is a flat plane (re-orient the part with *Lay on face* to choose it), the occlusion check samples one ray per triangle (dense meshes make this a non-issue), and fillets can't be added to your part automatically — the drape check tells you where they're needed.
+
+### Making a release
+
+1. Bump the version in `moldgen/__init__.py` and `pyproject.toml`, and add a `## <version>` section to `CHANGELOG.md`.
+2. Merge to `main`, then tag it: `git tag v<version> && git push origin v<version>`.
+
+The [Release workflow](.github/workflows/release.yml) checks the versions agree, runs the tests, builds the Python package and the Windows/macOS/Linux apps (each smoke-tested as a frozen binary), and publishes a GitHub Release with the CHANGELOG section as notes. *Actions → Release → Run workflow* does a test build without publishing; the files are attached to the run.
+
+To build the app for your own machine: `pip install . "pyinstaller>=6.10,<7"` then `python packaging/build_app.py` → `dist/moldgen-<version>-<os>-<arch>.zip`; `python packaging/smoke_test.py` checks it.
 
 ## License
 
