@@ -14,6 +14,10 @@ const state = {
   planeMesh: null,
   halfMeshes: {},
   explodeMax: 60,
+  blockBounds: null,
+  // last suggestion applied to the slider, so a mode switch only moves the
+  // plane when the user hasn't placed it by hand
+  appliedSuggestion: null,
 };
 
 // --- Scene (Z-up, millimeters) ----------------------------------------------
@@ -27,6 +31,7 @@ camera.up.set(0, 0, 1);
 camera.position.set(120, -120, 90);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.localClippingEnabled = true;
 renderer.setPixelRatio(window.devicePixelRatio);
 renderer.setSize(viewport.clientWidth, viewport.clientHeight);
 viewport.appendChild(renderer.domElement);
@@ -101,7 +106,15 @@ const planeMaterial = new THREE.MeshBasicMaterial({
 
 const NEUTRAL = [1, 1, 1];
 const UNDERCUT = [0.95, 0.23, 0.2];
+const HIDDEN_UNDERCUT = [0.69, 0.31, 0.88];
 const LOW_DRAFT = [0.98, 0.72, 0.25];
+const CORE = [0.31, 0.76, 0.85];
+
+// approximate solid densities for the print-mass estimate (g/cm³)
+const PRINT_DENSITY = { resin: 1.15, fdm: 1.24 };
+
+// section view: keeps the half of the mold away from the default camera
+const sectionPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 
 // --- Helpers -----------------------------------------------------------------
 
@@ -118,8 +131,26 @@ async function postJSON(url, payload) {
     body: JSON.stringify(payload),
   });
   const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(body.detail || `request failed (${res.status})`);
+  if (!res.ok) throw new Error(errorText(body, res.status));
   return body;
+}
+
+function errorText(body, status) {
+  const d = body && body.detail;
+  if (typeof d === 'string') return d;
+  if (Array.isArray(d)) {
+    return d.map((e) => `${(e.loc || []).filter((x) => x !== 'body').join('.')}: ${e.msg}`).join('; ');
+  }
+  return `request failed (${status})`;
+}
+
+function currentMode() {
+  return document.querySelector('input[name="mold-style"]:checked').value;
+}
+
+// which suggestion / profile fits the selected mold style
+function suggestionKey() {
+  return currentMode() === 'compression' ? 'two_part' : $('keep-side').value;
 }
 
 function disposeMesh(mesh) {
@@ -183,20 +214,40 @@ function updatePlane() {
   if (!state.planeMesh) return;
   state.planeMesh.position.z = parseFloat($('parting-z').value);
   $('parting-z-out').textContent = `${(+$('parting-z').value).toFixed(1)} mm`;
+  drawProfile();
+}
+
+function suggestedZ() {
+  const s = state.stats;
+  if (!s) return null;
+  return (s.suggested && s.suggested[suggestionKey()]) ?? s.suggested_parting_z_mm;
+}
+
+function applySuggestion(force = false) {
+  const z = suggestedZ();
+  if (z == null) return;
+  const slider = $('parting-z');
+  const untouched = state.appliedSuggestion != null &&
+    Math.abs(parseFloat(slider.value) - state.appliedSuggestion) < 1e-6;
+  const btn = $('use-suggested');
+  btn.textContent = `suggested: ${z.toFixed(1)} mm`;
+  btn.classList.remove('hidden');
+  if (force || untouched) {
+    slider.value = z;
+    state.appliedSuggestion = parseFloat(slider.value);
+    updatePlane();
+    resetAnalysis();
+  }
+  drawProfile();
 }
 
 function initPartingControls(stats) {
   const [lo, hi] = [stats.bounds[0][2], stats.bounds[1][2]];
   const slider = $('parting-z');
-  slider.min = lo.toFixed(1);
-  slider.max = hi.toFixed(1);
-  slider.step = Math.max((hi - lo) / 400, 0.01).toFixed(2);
-  slider.value = stats.suggested_parting_z_mm.toFixed(1);
+  slider.min = lo;
+  slider.max = hi;
+  slider.step = Math.max((hi - lo) / 1000, 0.001);
   slider.disabled = false;
-
-  const btn = $('use-suggested');
-  btn.textContent = `suggested: ${stats.suggested_parting_z_mm.toFixed(1)} mm`;
-  btn.classList.remove('hidden');
 
   const [minB, maxB] = stats.bounds;
   const w = (maxB[0] - minB[0]) * 1.6 + 30;
@@ -205,14 +256,63 @@ function initPartingControls(stats) {
   state.planeMesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), planeMaterial);
   state.planeMesh.position.set((minB[0] + maxB[0]) / 2, (minB[1] + maxB[1]) / 2, 0);
   scene.add(state.planeMesh);
-  updatePlane();
+  $('profile').classList.toggle('hidden', !stats.parting_profile);
+  applySuggestion(true);
+}
+
+// Undercut area across the part's height for the selected mold style:
+// green where the part releases, red where it locks, marker = current plane.
+function drawProfile() {
+  const canvas = $('profile');
+  const prof = state.stats && state.stats.parting_profile;
+  if (!prof || canvas.classList.contains('hidden')) return;
+  const dpr = window.devicePixelRatio || 1;
+  const cw = canvas.clientWidth;
+  const ch = canvas.clientHeight;
+  if (!cw) return;
+  canvas.width = cw * dpr;
+  canvas.height = ch * dpr;
+  const g = canvas.getContext('2d');
+  g.scale(dpr, dpr);
+  g.clearRect(0, 0, cw, ch);
+
+  const values = prof[suggestionKey()] || prof.two_part;
+  const [lo, hi] = [state.stats.bounds[0][2], state.stats.bounds[1][2]];
+  const span = hi - lo || 1;
+  const max = Math.max(...values);
+  const n = values.length;
+  const bw = cw / n;
+  const css = getComputedStyle(document.documentElement);
+  for (let i = 0; i < n; i++) {
+    const v = values[i];
+    const x = ((prof.z[i] - lo) / span) * cw - bw / 2;
+    if (v <= 1e-9) {
+      g.fillStyle = css.getPropertyValue('--good').trim() || '#62cf96';
+      g.globalAlpha = 0.45;
+      g.fillRect(x, ch - 4, bw + 0.5, 4);
+    } else {
+      g.fillStyle = css.getPropertyValue('--bad').trim() || '#e86a5f';
+      g.globalAlpha = 0.85;
+      const h = 4 + (ch - 8) * Math.sqrt(v / max);
+      g.fillRect(x, ch - h, bw + 0.5, h);
+    }
+  }
+  g.globalAlpha = 1;
+  const z = parseFloat($('parting-z').value);
+  const mx = ((z - lo) / span) * cw;
+  g.strokeStyle = css.getPropertyValue('--accent').trim() || '#ef8540';
+  g.lineWidth = 2;
+  g.beginPath();
+  g.moveTo(mx, 0);
+  g.lineTo(mx, ch);
+  g.stroke();
 }
 
 // --- Upload ------------------------------------------------------------------
 
 async function loadPartFromServer(body) {
   // cache-buster: /api/orient rewrites part.stl under the same URL
-  const geometry = await new STLLoader().loadAsync(`${body.mesh_url}?t=${Date.now()}`);
+  const geometry = await new STLLoader().loadAsync(`${body.mesh_url}?v=${Date.now()}`);
   fillColors(geometry, NEUTRAL);
 
   disposeMesh(state.partMesh);
@@ -237,10 +337,14 @@ async function loadPartFromServer(body) {
   const wt = $('info-watertight');
   wt.textContent = body.watertight ? 'yes' : 'no — will attempt repair';
   wt.className = body.watertight ? 'good' : 'bad';
+  if (body.volume_mm3) {
+    $('info-tris').textContent += ` · ${(body.volume_mm3 / 1000).toFixed(1)} cm³`;
+  }
   const warn = $('part-warnings');
   warn.replaceChildren(
     ...body.warnings.map((w) => Object.assign(document.createElement('li'), { textContent: w })));
 
+  state.appliedSuggestion = null;
   initPartingControls(body);
   resetAnalysis();
   $('analyze').disabled = false;
@@ -262,7 +366,7 @@ async function uploadFile(file) {
     }
     const res = await fetch('/api/upload', { method: 'POST', body: fd });
     const body = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(body.detail || `upload failed (${res.status})`);
+    if (!res.ok) throw new Error(errorText(body, res.status));
 
     setStatus('loading preview…');
     await loadPartFromServer(body);
@@ -369,12 +473,21 @@ window.addEventListener('keydown', (e) => {
 
 async function analyze() {
   if (!state.meshId || state.busy) return;
+  const minDraft = parseFloat($('min-draft').value);
+  if (!Number.isFinite(minDraft)) {
+    setStatus('Min draft warn must be a number', true);
+    return;
+  }
   state.busy = true;
   setStatus('analyzing undercuts…');
   try {
+    const mode = currentMode();
     const body = await postJSON('/api/analyze', {
       mesh_id: state.meshId,
       parting_z_mm: parseFloat($('parting-z').value),
+      min_draft_deg: minDraft,
+      mode,
+      keep_side: $('keep-side').value,
     });
     resetAnalysis();
     const colors = state.partMesh.geometry.attributes.color;
@@ -385,11 +498,21 @@ async function analyze() {
         colors.setXYZ(3 * f + 2, ...rgb);
       }
     };
+    // later paints win: core < low draft < undercut < hidden undercut
+    if (!body.single_sided) paint(body.core_faces, CORE);
     paint(body.low_draft_faces, LOW_DRAFT);
     paint(body.undercut_faces, UNDERCUT);
+    paint(body.occluded_faces, HIDDEN_UNDERCUT);
     colors.needsUpdate = true;
 
-    for (const half of ['bottom', 'top']) {
+    const rows = body.single_sided
+      ? [[$('keep-side').value === 'below' ? 'bottom' : 'top', 'Tool']]
+      : [['bottom', 'Female half'], ['top', 'Male half']];
+    for (const half of ['bottom', 'top']) $(`verdict-${half}-row`).classList.add('hidden');
+    for (const [half, label] of rows) {
+      $(`verdict-${half}-row`).classList.remove('hidden');
+      $(`verdict-${half}-label`).textContent =
+        `${label} (${half === 'bottom' ? '−' : '+'}Z pull)`;
       const el = $(`verdict-${half}`);
       const v = body[half];
       if (!v.likely_demoldable) {
@@ -404,12 +527,14 @@ async function analyze() {
       }
     }
     $('verdicts').classList.remove('hidden');
+    const flagged = body.undercut_faces.length + body.low_draft_faces.length;
     $('legend').classList.toggle(
-      'hidden', body.undercut_faces.length + body.low_draft_faces.length === 0);
+      'hidden', flagged + (body.single_sided ? 0 : body.core_faces.length) === 0);
     showPartView();
-    const n = body.undercut_faces.length + body.low_draft_faces.length;
-    setStatus(n
-      ? `${body.undercut_faces.length} undercut (red) + ${body.low_draft_faces.length} low-draft (amber) faces highlighted`
+    const hidden = body.occluded_faces.length;
+    setStatus(flagged
+      ? `${body.undercut_faces.length} undercut faces (red${hidden ? `, ${hidden} hidden — purple` : ''}) + ` +
+        `${body.low_draft_faces.length} low-draft (amber)`
       : 'no undercuts or low-draft walls at this parting height');
   } catch (err) {
     setStatus(err.message, true);
@@ -421,14 +546,33 @@ async function analyze() {
 
 // --- Generate ----------------------------------------------------------------
 
+// numeric inputs sent to /api/generate, keyed by element id
+const NUMERIC_FIELDS = {
+  'parting-z': 'Parting plane', 'wall-margin': 'Wall margin',
+  'base-thickness': 'Base thickness', 'cavity-offset': 'Cavity offset',
+  'shrink-comp': 'Shrink comp.', plunge: 'Plunge depth', 'plug-border': 'Plug border',
+  'plug-clearance': 'Plug clearance', 'plug-draft': 'Wall draft', 'lead-in': 'Lead-in',
+  'jack-count': 'Jack screws', 'min-draft': 'Min draft warn', 'pin-clearance': 'Pin clearance',
+  'bolt-count': 'Bolts', 'trim-allowance': 'Trim allowance', 'trim-kick': 'Kick angle',
+  'tape-zone': 'Tape zone', 'flange-spacing': 'Hole spacing',
+};
+
+function invalidField() {
+  for (const [id, label] of Object.entries(NUMERIC_FIELDS)) {
+    if (!Number.isFinite(parseFloat($(id).value))) return label;
+  }
+  return null;
+}
+
 function currentParams() {
   return {
     mesh_id: state.meshId,
-    mode: document.querySelector('input[name="mold-style"]:checked').value,
+    mode: currentMode(),
     parting_z_mm: parseFloat($('parting-z').value),
     wall_margin_mm: parseFloat($('wall-margin').value),
     base_thickness_mm: parseFloat($('base-thickness').value),
     cavity_offset_mm: parseFloat($('cavity-offset').value),
+    shrink_comp_pct: parseFloat($('shrink-comp').value),
     keep_side: $('keep-side').value,
     plunge_mm: parseFloat($('plunge').value),
     plug_border_mm: parseFloat($('plug-border').value),
@@ -464,6 +608,11 @@ function applyExplode() {
 
 async function generate() {
   if (!state.meshId || state.busy) return;
+  const bad = invalidField();
+  if (bad) {
+    setStatus(`${bad} must be a number`, true);
+    return;
+  }
   state.busy = true;
   const btn = $('generate');
   btn.disabled = true;
@@ -492,15 +641,34 @@ async function generate() {
       swatch.className = 'sw';
       swatch.style.background =
         '#' + (halfMaterials[name] || halfMaterials.tool).color.getHexString();
+      const cm3 = info.volume / 1000;
+      const density = PRINT_DENSITY[$('printer').value];
+      const mass = density ? ` · ≈${Math.round(cm3 * density)} g solid` : '';
       a.append(
         swatch,
-        `${name}.stl — ${(info.volume / 1000).toFixed(0)} cm³`,
+        `${name}.stl — ${cm3.toFixed(0)} cm³${mass}`,
         Object.assign(document.createElement('span'), { className: 'dl-arrow', textContent: '↓' }),
       );
       downloads.append(a);
     }
 
+    const bundle = $('bundle');
+    bundle.href = body.bundle_url;
+    bundle.classList.toggle('hidden', !body.bundle_url);
+
+    const charge = body.metadata.forged && body.metadata.forged.charge;
+    const chargeEl = $('charge');
+    chargeEl.classList.toggle('hidden', !charge);
+    if (charge) {
+      chargeEl.innerHTML =
+        `Charge: <strong>≈${charge.est_part_mass_g.toFixed(0)} g</strong> forged carbon ` +
+        `(${charge.part_volume_cm3.toFixed(1)} cm³ at 1.5 g/cm³) + a few % for flash<br>` +
+        `Loading space: ${charge.loading_volume_cm3.toFixed(0)} cm³ ` +
+        `(${charge.loading_ratio.toFixed(1)}× the part — loose fibre needs 2–3×)`;
+    }
+
     const [bMin, bMax] = body.metadata.block.bounds;
+    state.blockBounds = [bMin, bMax];
     state.explodeMax = (bMax[2] - bMin[2]) * 1.2;
     $('explode').value = 0;
     applyExplode();
@@ -508,9 +676,13 @@ async function generate() {
     $('gen-warnings').replaceChildren(
       ...body.warnings.map((w) => Object.assign(document.createElement('li'), { textContent: w })));
 
+    applySection();
     showMoldView();
     fitCamera(bMin, bMax);
-    setStatus('mold generated — both halves watertight');
+    const halves = Object.values(body.metadata.halves);
+    const tight = halves.every((h) => h.watertight);
+    setStatus(`mold generated — ${halves.length === 1 ? 'tool' : `${halves.length} halves`} ` +
+      (tight ? 'watertight' : 'NOT watertight, check the warnings'), !tight);
   } catch (err) {
     setStatus(err.message, true);
   } finally {
@@ -518,6 +690,25 @@ async function generate() {
     $('status').classList.remove('busy');
     btn.disabled = false;
     btn.textContent = 'Generate mold';
+  }
+}
+
+// --- Section view --------------------------------------------------------------
+
+function applySection() {
+  const on = $('section').checked && state.blockBounds;
+  $('section-row').classList.toggle('hidden', !$('section').checked);
+  const planes = on ? [sectionPlane] : [];
+  for (const m of [...Object.values(halfMaterials), ghostMaterial]) {
+    m.clippingPlanes = planes;
+    m.side = on ? THREE.DoubleSide : THREE.FrontSide;
+    m.needsUpdate = true;
+  }
+  if (on) {
+    const [bMin, bMax] = state.blockBounds;
+    const t = parseFloat($('section-pos').value);
+    // keep y >= cut: the camera looks from −Y, so the near part is removed
+    sectionPlane.constant = -(bMin[1] + t * (bMax[1] - bMin[1]));
   }
 }
 
@@ -551,9 +742,7 @@ $('parting-z').addEventListener('input', () => {
   showPartView();
 });
 $('use-suggested').addEventListener('click', () => {
-  $('parting-z').value = state.stats.suggested_parting_z_mm.toFixed(1);
-  updatePlane();
-  resetAnalysis();
+  applySuggestion(true);
   showPartView();
 });
 
@@ -572,11 +761,18 @@ function applyMode(mode) {
   $('open-layup-opts').classList.toggle('hidden', mode !== 'open_layup');
   $('prepreg-panel').classList.toggle('hidden', mode !== 'prepreg');
   $('forged-panel').classList.toggle('hidden', !compression);
-  $('demold-panel').classList.toggle('hidden', !compression);
+  $('compression-demold').classList.toggle('hidden', !compression);
   $('hardware-panel').classList.toggle('hidden', !compression);
   $('wall-margin').value = MODE_DEFAULTS[mode].margin;
   $('min-draft').value = MODE_DEFAULTS[mode].minDraft;
+  resetAnalysis();
+  applySuggestion();
 }
+
+$('keep-side').addEventListener('change', () => {
+  resetAnalysis();
+  applySuggestion();
+});
 
 for (const radio of document.querySelectorAll('input[name="mold-style"]')) {
   radio.addEventListener('change', () => {
@@ -600,6 +796,9 @@ $('ghost').addEventListener('change', () => {
   if (state.ghostMesh) state.ghostMesh.visible = $('ghost').checked;
 });
 $('explode').addEventListener('input', applyExplode);
+$('section').addEventListener('change', applySection);
+$('section-pos').addEventListener('input', applySection);
+window.addEventListener('resize', drawProfile);
 $('analyze').addEventListener('click', analyze);
 $('generate').addEventListener('click', generate);
 $('lay-flat').addEventListener('click', () => setLayFlat(!layFlat.active));

@@ -49,12 +49,14 @@ def _prism(cx, cy, w, h, z0, height, grow_per_side=0.0):
     return Manifold.extrude(cs, height, 0, 0.0, scale).translate((cx, cy, z0))
 
 
-def build(part_man, part_bounds, z_split, params, warnings, part_centroid_xy=None):
+def build(part_man, part_bounds, z_split, params, warnings, part_mesh=None,
+          part_centroid_xy=None):
     """Construct the female and male halves of a telescoping mold.
 
     Returns (female, male, meta, hw_meta). Raises ValueError when the
     requested dimensions cannot produce a usable flange band.
-    `part_centroid_xy` locates the optional ejector hole.
+    `part_mesh` (the trimesh of part_man) is needed for the optional ejector
+    hole, which starts its search at `part_centroid_xy`.
     """
     m = params.wall_margin_mm
     (px0, py0, pz0), (px1, py1, pz1) = np.asarray(part_bounds, dtype=float)
@@ -112,6 +114,8 @@ def build(part_man, part_bounds, z_split, params, warnings, part_centroid_xy=Non
     plate = mfld.box((block_min[0], block_min[1], z_flange), block_max)
     male = (plug + plate) - part_man
 
+    female, male, core_info = transfer_cores(female, male, z_split, warnings)
+
     meta = {
         "z_flange": float(z_flange),
         "plunge_mm": plunge,
@@ -119,7 +123,9 @@ def build(part_man, part_bounds, z_split, params, warnings, part_centroid_xy=Non
         "plug_rect": [cx - plug_w / 2, cy - plug_h / 2, cx + plug_w / 2, cy + plug_h / 2],
         "pocket_clearance_mm": clear,
         "draft_deg": float(params.plug_draft_deg),
+        "cores": core_info,
     }
+    meta["charge"] = _charge_check(part_man, female, block_min, block_max, z_flange, warnings)
 
     # --- flange hardware ----------------------------------------------------
     hw_meta: dict = {}
@@ -166,9 +172,7 @@ def build(part_man, part_bounds, z_split, params, warnings, part_centroid_xy=Non
             female = female - slots
             male = male - slots
             hw_meta["pry_slots"] = pry_info
-            avoid += [
-                (x, y, pry_info["width"] / 2.0) for x, y in pry_info["centers"]
-            ]
+            avoid += [tuple(k) for k in pry_info["keepouts"]]
 
     if params.overflow_channels:
         pocket_at_flange = [
@@ -185,10 +189,103 @@ def build(part_man, part_bounds, z_split, params, warnings, part_centroid_xy=Non
             hw_meta["overflow"] = of_info
 
     if params.ejector_holes:
-        center = part_centroid_xy if part_centroid_xy is not None else (cx, cy)
-        hole, ej_info = hardware.ejector_hole(block_min, center, z_split, params, warnings)
-        female = female - hole
-        hw_meta["ejector"] = ej_info
+        if part_mesh is None:
+            part_mesh = mfld.to_trimesh(part_man)
+        hole, ej_info = hardware.ejector_hole(
+            block_min, part_mesh, z_split, params, warnings, part_centroid_xy
+        )
+        if hole is not None:
+            female = female - hole
+            hw_meta["ejector"] = ej_info
 
     meta["block_bounds"] = [block_min.tolist(), block_max.tolist()]
     return female, male, meta, hw_meta
+
+
+def transfer_cores(female, male, z_split, warnings):
+    """Hand shell cores to the half that can actually pull them.
+
+    A cup cut through its walls leaves the mold material inside it, below
+    the plane, sealed off from the female by the shell — a loose body that
+    would lock the part. It is exactly the male's job (a core reaching down
+    into the cup), and it meets the plug face at the parting plane, so it
+    is unioned onto the male; an inverted cup's core goes the other way.
+    Bodies that don't reach the plane are internal voids of a hollow part
+    — nothing can mold them; they are dropped with a warning.
+    """
+    info = {"to_male": 0, "to_female": 0, "voids_dropped": 0}
+    # manifold stores float32: allow its rounding at the plane's magnitude
+    tol = 1e-3 * max(1.0, abs(z_split))
+
+    def split(half, top_edge):
+        bodies = mfld.solid_bodies(half)
+        if len(bodies) <= 1:
+            return half, []
+        bodies.sort(key=lambda b: b.volume(), reverse=True)
+        main, cores = bodies[0], []
+        for body in bodies[1:]:
+            bb = np.asarray(body.bounding_box(), dtype=float).reshape(2, 3)
+            touches = abs((bb[1, 2] if top_edge else bb[0, 2]) - z_split) <= tol
+            if touches:
+                cores.append(body)
+            else:
+                info["voids_dropped"] += 1
+        return main, cores
+
+    female, f_cores = split(female, top_edge=True)
+    male, m_cores = split(male, top_edge=False)
+    for core in f_cores:
+        male = male + core
+    for core in m_cores:
+        female = female + core
+    info["to_male"], info["to_female"] = len(f_cores), len(m_cores)
+    if f_cores:
+        warnings.append(
+            f"shell part: {len(f_cores)} core(s) inside the part moved from the "
+            "female to the male, which molds the inside surface"
+        )
+    if m_cores:
+        warnings.append(
+            f"shell part: {len(m_cores)} core(s) inside the part moved from the "
+            "male to the female, which molds the inside surface"
+        )
+    if info["voids_dropped"]:
+        warnings.append(
+            "part has sealed internal voids; they can't be molded and were ignored"
+        )
+    return female, male, info
+
+
+# Forged carbon (chopped tow + epoxy at ~50% fibre volume) is ~1.5 g/cm³.
+FORGED_DENSITY_G_CM3 = 1.5
+# Loose chopped fibre bulks to 2-3x its compressed volume; Easy Composites'
+# "2-3x the part depth of travel" exists to hold it before closing.
+LOADING_BULK_FACTOR = 2.0
+
+
+def _charge_check(part_man, female, block_min, block_max, z_flange, warnings):
+    """Charge estimate and loading-volume check for the compression mold.
+
+    Before closing, the female holds the loose charge in its cavity plus the
+    telescoping pocket above it (pocket area x plunge). If that is less
+    than ~2x the part volume, the loose fibre won't fit and the plug can't
+    start its stroke.
+    """
+    part_vol = float(part_man.volume())
+    region = mfld.box(
+        (block_min[0], block_min[1], block_min[2]), (block_max[0], block_max[1], z_flange)
+    )
+    loading = float((region - female).volume())
+    info = {
+        "part_volume_cm3": part_vol / 1000.0,
+        "est_part_mass_g": part_vol / 1000.0 * FORGED_DENSITY_G_CM3,
+        "loading_volume_cm3": loading / 1000.0,
+        "loading_ratio": loading / part_vol if part_vol > 0 else 0.0,
+    }
+    if part_vol > 0 and loading < LOADING_BULK_FACTOR * part_vol:
+        warnings.append(
+            f"loading volume is {loading / part_vol:.1f}x the part volume; loose "
+            "chopped fibre bulks to 2-3x, so the charge may not fit before the "
+            "plug engages — increase plunge_mm"
+        )
+    return info

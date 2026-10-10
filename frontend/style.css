@@ -107,6 +107,14 @@ body {
   background: #fab73f;
 }
 
+.sw-hidden {
+  background: #b04fe0;
+}
+
+.sw-core {
+  background: #4fc3d9;
+}
+
 .hidden {
   display: none !important;
 }
@@ -535,8 +543,41 @@ button {
   transition: border-color 0.12s;
 }
 
-.dl + .dl {
+.dl + .dl,
+#downloads + .dl {
   margin-top: 6px;
+}
+
+.dl.bundle {
+  border-style: dashed;
+}
+
+/* --- parting profile / result extras ---------------------------------------- */
+
+#profile {
+  display: block;
+  width: 100%;
+  height: 46px;
+  margin-top: 6px;
+  border-radius: 6px;
+  background: var(--input-bg);
+  border: 1px solid var(--border);
+}
+
+#charge {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--input-bg);
+  border: 1px solid var(--border);
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  line-height: 1.45;
+}
+
+#charge strong {
+  color: var(--text);
+  font-weight: 600;
 }
 
 .dl:hover {

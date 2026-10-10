@@ -37,8 +37,13 @@ class MoldParams:
         Extra mold material around the part bounding box, on all six sides.
     cavity_offset_mm:
         Uniform offset applied to the part surface before subtraction
-        (e.g. small positive values for release clearance). See
+        (e.g. small positive values for release clearance). Flat faces move
+        by exactly this much, sharp edges and corners included. See
         `offset.offset_mesh` for the self-intersection caveats.
+    shrink_comp_pct:
+        Uniform scale-up of the cavity in percent (±5), about the part's
+        bbox center at the parting height, to compensate for shrinkage of
+        the cast/cured part or of a printed tool. Applied before the offset.
     keep_side:
         For open_layup only: which side of the parting plane to keep,
         "above" or "below".
@@ -106,6 +111,9 @@ class MoldParams:
     # produce needlessly thick molds.
     base_thickness_mm: float = 10.0
     cavity_offset_mm: float = 0.0
+    # uniform cavity scale-up (%) compensating shrinkage of the part
+    # material and/or a printed tool; about the part center at parting height
+    shrink_comp_pct: float = 0.0
     keep_side: str = "below"
     # telescoping plug/pocket — compression mode only. Defaults follow Easy
     # Composites' forged carbon mould design guidance: piston depth ~6 mm for
@@ -166,9 +174,10 @@ class MoldParams:
 class MoldResult:
     """Outcome of generate_mold.
 
-    On success (ok=True) `halves` holds trimesh objects keyed "top"/"bottom"
-    (compression) or "tool" (open_layup), and `metadata` holds volumes,
-    bounds and triangle counts. On failure (ok=False) `errors` lists what is
+    On success (ok=True) `halves` holds trimesh objects keyed
+    "female"/"male" (compression) or "tool" (open_layup, prepreg), and
+    `metadata` holds volumes, bounds, triangle counts, hardware placement
+    and the demolding numbers. On failure (ok=False) `errors` lists what is
     wrong with the input; `halves` is empty. `warnings` may be populated in
     either case.
     """
