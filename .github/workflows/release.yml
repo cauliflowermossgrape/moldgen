@@ -1,13 +1,18 @@
 name: Release
 
-# Push a version tag (git tag v0.2.0 && git push origin v0.2.0) to build
-# everything and publish a GitHub Release. "Run workflow" on the Actions tab
-# does a test build: same jobs, artifacts downloadable from the run, no
-# release.
+# Two ways to release, both end with the downloads attached:
+# - push a version tag (git tag v0.2.0 && git push origin v0.2.0): the
+#   release is created here, with the CHANGELOG section as notes;
+# - or publish a release from GitHub's "Draft a new release" page: your
+#   title and text are kept and the files are added to it.
+# "Run workflow" on the Actions tab does a test build: same jobs, artifacts
+# downloadable from the run, no release.
 
 on:
   push:
     tags: ["v*"]
+  release:
+    types: [published]
   workflow_dispatch:
 
 permissions:
@@ -111,11 +116,17 @@ jobs:
           merge-multiple: true
       - run: ls -la dist
       - run: python packaging/release_notes.py "$GITHUB_REF_NAME" > notes.md
-      - name: Create release
+      - name: Create the release, or attach the files to an existing one
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/* \
-            --title "moldgen ${GITHUB_REF_NAME#v}" \
-            --notes-file notes.md \
-            --verify-tag
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            # created on the web (or by the other trigger): keep its title
+            # and text, just (re)attach the builds
+            gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* \
+              --title "moldgen ${GITHUB_REF_NAME#v}" \
+              --notes-file notes.md \
+              --verify-tag
+          fi
