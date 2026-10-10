@@ -21,7 +21,9 @@
       <div id="drop-hint" class="hidden">Drop STL · 3MF · OBJ</div>
       <div id="legend" class="hidden">
         <span class="chip"><i class="sw sw-undercut"></i>undercut — locks</span>
+        <span class="chip"><i class="sw sw-hidden"></i>hidden undercut — blocked pull</span>
         <span class="chip"><i class="sw sw-drag"></i>low draft — drags</span>
+        <span class="chip"><i class="sw sw-core"></i>molded by a core</span>
       </div>
     </div>
     <aside id="sidebar">
@@ -88,14 +90,16 @@
           <input type="range" id="parting-z" step="0.1" disabled />
           <output id="parting-z-out">—</output>
         </div>
+        <canvas id="profile" class="hidden" height="46"
+          title="Undercut area across parting heights for the selected mold style (left = bottom of the part). Red = the part locks at that height; the marker is the current plane."></canvas>
         <p class="hint">
           <button class="link hidden" id="use-suggested"></button>
         </p>
         <button id="analyze" class="secondary" disabled
-          title="First-order undercut check: faces that fight the pull direction of their half turn red. It won't catch silhouette-occluded undercuts (e.g. tilted bores).">Analyze undercuts</button>
+          title="Demolding check for the selected mold style: faces that fight their half's pull direction turn red, faces whose pull path is blocked by other part geometry (tilted bores, overhangs) purple, low-draft walls amber. Shell parts (cups, cases) are handled: the inside is molded by a core on the other half, or is the bagged side on a single-sided tool.">Analyze undercuts</button>
         <div id="verdicts" class="hidden">
-          <div class="kv"><span>Female half (−Z pull)</span><span id="verdict-bottom"></span></div>
-          <div class="kv"><span>Male half (+Z pull)</span><span id="verdict-top"></span></div>
+          <div class="kv" id="verdict-bottom-row"><span id="verdict-bottom-label">Female half (−Z pull)</span><span id="verdict-bottom"></span></div>
+          <div class="kv" id="verdict-top-row"><span id="verdict-top-label">Male half (+Z pull)</span><span id="verdict-top"></span></div>
         </div>
       </section>
 
@@ -142,7 +146,12 @@
         <label class="field"
           title="Uniformly inflates the cavity, e.g. 0.1–0.2 mm to compensate print shrinkage or leave release-agent allowance. Large values can self-intersect on fine detail.">
           <span>Cavity offset (mm)</span>
-          <input type="number" id="cavity-offset" value="0" step="0.05" />
+          <input type="number" id="cavity-offset" value="0" step="0.05" min="-5" max="5" />
+        </label>
+        <label class="field"
+          title="Scales the cavity up uniformly to compensate shrinkage — of the cured part, or of a printed tool after post-cure (check your resin's datasheet; typically 0–1 %). Scaled about the part center at the parting height.">
+          <span>Shrink comp. (%)</span>
+          <input type="number" id="shrink-comp" value="0" step="0.1" min="-5" max="5" />
         </label>
       </section>
 
@@ -218,17 +227,19 @@
           <span>Min draft warn (°)</span>
           <input type="number" id="min-draft" value="1" min="0.5" max="10" step="0.5" />
         </label>
-        <label class="check"
-          title="Tap-sized holes through the male plate over the female flange. Thread a bolt in and its tip bears on the female face, jacking the halves apart evenly — the screw counterpart to the pry slots. Hole is bolt Ø − 1 mm so the bolt self-threads in a printed plate.">
-          <input type="checkbox" id="jack-screws" checked /> Jack screws</label>
-        <label class="field" id="jack-count-field"
-          title="Number of jacking screws, alternating edges so opposing screws sit diagonal (1–4).">
-          <span>Jack screws</span>
-          <input type="number" id="jack-count" value="2" min="1" max="4" step="1" />
-        </label>
-        <label class="check"
-          title="Ejector-pin hole through the female base into the cavity at the part's centroid — push a pin or dowel through to eject a stuck part, standard compression-molding practice. Plug with wax/tape before layup; leaves a small witness mark on the part.">
-          <input type="checkbox" id="ejector" /> Ejector pin hole</label>
+        <div id="compression-demold">
+          <label class="check"
+            title="Tap-sized holes through the male plate over the female flange. Thread a bolt in and its tip bears on the female face, jacking the halves apart evenly — the screw counterpart to the pry slots. Hole is bolt Ø − 1 mm so the bolt self-threads in a printed plate.">
+            <input type="checkbox" id="jack-screws" checked /> Jack screws</label>
+          <label class="field" id="jack-count-field"
+            title="Number of jacking screws, alternating edges so opposing screws sit diagonal (1–4).">
+            <span>Jack screws</span>
+            <input type="number" id="jack-count" value="2" min="1" max="4" step="1" />
+          </label>
+          <label class="check"
+            title="Ejector-pin hole through the female base into the cavity — push a pin or dowel through to eject a stuck part, standard compression-molding practice. Placed at the part's centroid, or the nearest spot where the pin lands squarely on the part's underside. Plug with wax/tape before layup; leaves a small witness mark on the part.">
+            <input type="checkbox" id="ejector" /> Ejector pin hole</label>
+        </div>
       </section>
 
       <section class="panel" id="hardware-panel">
@@ -269,7 +280,16 @@
           </div>
           <label class="check" title="Shows the original part translucently inside the cavity.">
             <input type="checkbox" id="ghost" /> Ghost part in cavity</label>
+          <label class="check" title="Cuts the view with a vertical plane so you can inspect the cavity, pinch-off walls and hardware inside the closed mold.">
+            <input type="checkbox" id="section" /> Section view</label>
+          <div class="row hidden" id="section-row">
+            <span class="lbl">Cut</span>
+            <input type="range" id="section-pos" min="0" max="1" step="0.005" value="0.5" />
+          </div>
+          <div id="charge" class="hidden"></div>
           <div id="downloads"></div>
+          <a id="bundle" class="dl bundle hidden" download="moldgen-mold.zip"
+            title="Every mold half plus a setup sheet (charge weight, hardware list, warnings) and the parameters used.">All files + setup sheet (.zip)<span class="dl-arrow">↓</span></a>
           <ul id="gen-warnings" class="warnings"></ul>
         </div>
       </section>
