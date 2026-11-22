@@ -180,4 +180,4 @@ To build the app for your own machine: `pip install . "pyinstaller>=6.10,<7"` th
 
 ## License
 
-[MIT](LICENSE)
+Copyright (C) 2026 cauliflowermossgrape. Licensed under the [GNU General Public License v3.0](LICENSE) or later.
